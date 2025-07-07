@@ -6,9 +6,9 @@ from typing import List, Dict, Tuple, Union
 from datasets import Dataset
 from transformers import AutoTokenizer, AutoModel
 
-from src.search.simple_encoder import SimpleEncoder
-from src.data_utils import load_corpus, load_used_corpus
-from src.search.logger_config import logger
+from ranger.corag.search.simple_encoder import SimpleEncoder
+from ranger.corag.data_utils import load_corpus, load_used_corpus
+from ranger.corag.search.logger_config import logger
 
 
 def _get_all_shards_path(index_dir: str) -> List[str]:

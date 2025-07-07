@@ -15,7 +15,7 @@ from data_utils import format_input_context, parse_answer_logprobs
 from prompts import get_generate_subquery_prompt, get_generate_intermediate_answer_prompt, get_generate_final_answer_prompt
 from agent.agent_utils import RagPath
 from utils import batch_truncate
-from src.data_utils import load_corpus
+from ranger.corag.data_utils import load_corpus
 
 
 def _normalize_subquery(subquery: str) -> str:

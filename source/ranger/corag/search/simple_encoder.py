@@ -9,9 +9,9 @@ from datasets import Dataset
 from transformers import AutoModel, AutoTokenizer
 from transformers.modeling_outputs import BaseModelOutput
 
-from src.search.logger_config import logger
-from src.utils import move_to_device, get_detailed_instruct, get_task_def_by_task_name, create_batch_dict, pool
-from src.search.model_config import MODEL_NAME_TO_POOL_TYPE, MODEL_NAME_TO_PREFIX_TYPE
+from ranger.corag.search.logger_config import logger
+from ranger.corag.utils import move_to_device, get_detailed_instruct, get_task_def_by_task_name, create_batch_dict, pool
+from ranger.corag.search.model_config import MODEL_NAME_TO_POOL_TYPE, MODEL_NAME_TO_PREFIX_TYPE
 
 
 class SimpleEncoder(nn.Module):

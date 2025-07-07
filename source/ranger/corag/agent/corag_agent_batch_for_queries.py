@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Optional, List, Dict, Tuple
 from datasets import Dataset
 from openai.types.chat import ChatCompletion
-from src.inference.qa_utils import _normalize_answer
+from ranger.corag.inference.qa_utils import _normalize_answer
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from logger_config import logger
@@ -18,7 +18,7 @@ from prompts import get_generate_subquery_prompt, get_generate_intermediate_answ
 from agent.agent_utils import RagPath
 from agent.agent_utils_2 import RagPath_2
 from utils import batch_truncate
-from src.data_utils import load_corpus
+from ranger.corag.data_utils import load_corpus
 
 class QueryResult:
     def __init__(self) -> None:

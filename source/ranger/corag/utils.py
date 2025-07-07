@@ -15,7 +15,7 @@ from nltk.metrics.distance import jaccard_distance
 from nltk.util import ngrams
 from typing import List, Union, Mapping, Dict, Any
 
-from src.search.logger_config import logger
+from ranger.corag.search.logger_config import logger
 
 
 def save_json_to_file(objects: Union[List, dict, Dataset], path: str, line_by_line: bool = False):

@@ -1,7 +1,7 @@
 from pyserini.search.lucene import LuceneSearcher
 import torch
 from typing import List, Dict, Union
-from src.data_utils import load_corpus
+from ranger.corag.data_utils import load_corpus
 
 
 class BM25Searcher:

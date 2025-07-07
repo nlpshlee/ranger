@@ -1,7 +1,10 @@
+from _init import *
+
 import os, json, logging, string, time
 from typing import Dict, List
 from tqdm import tqdm
 
+from ranger.modules import file_util
 from ranger.corag.agent.agent_utils import RagPath
 from ranger.corag.data_utils import format_documents_for_final_answer, parse_answer_logprobs
 from ranger.corag.inference.qa_utils import _normalize_answer
@@ -16,7 +19,13 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 PATH_LENGTH = 15
 NUM_OF_CHAINS = 10
 BATCH_SIZE=100
-OUTPUT_PATH = "/home/softstone/saltlux/data/output/option_data.jsonl"
+
+CURRENT_FILE_PATH = os.path.abspath(__file__)
+CURRENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_FILE_PATH))))
+OUTPUT_PATH = f'{CURRENT_DIR}/data/corag/output/option_data.jsonl'
+print(f'OUTPUT_PATH : {OUTPUT_PATH}')
+file_util.make_parent(OUTPUT_PATH)
+
 
 config = {
     "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",

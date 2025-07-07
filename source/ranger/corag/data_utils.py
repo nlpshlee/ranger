@@ -9,9 +9,9 @@ from contextlib import nullcontext
 from transformers import PreTrainedTokenizerFast
 from threading import Lock
 
-from src.config import Arguments
-from src.utils import batch_truncate
-from src.search.logger_config import logger
+from ranger.corag.config import Arguments
+from ranger.corag.utils import batch_truncate
+from ranger.corag.search.logger_config import logger
 
 
 def load_used_corpus() -> Dataset:

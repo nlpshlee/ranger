@@ -32,7 +32,7 @@ class VllmClient:
         #     model=model,
         #     dtype="half",
         # )
-        from src.utils import AtomicCounter
+        from ranger.corag.utils import AtomicCounter
         self.token_consumed: AtomicCounter = AtomicCounter()
         self.called_cnt = 0
 
