@@ -57,6 +57,11 @@ def get_window(in_list: list, idx: int, window_size: int, delim='', pad='$'):
     return delim.join(result)
 
 
+def chunks(arr, n):
+    for i in range(0, len(arr), n):
+        yield arr[i: i + n]
+
+
 ###########################################################################################
 
 '''

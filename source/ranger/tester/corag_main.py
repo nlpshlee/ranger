@@ -159,7 +159,7 @@ else:
         
         try:
             start_time = time.time()
-            paths = corag_agent.batch_sample_path_2(
+            paths = corag_agent.batch_sample_path(
                 query_ids=dataset['query_id'][current_start_idx:end_idx],
                 query_list=dataset['query'][current_start_idx:end_idx],
                 task_desc=config['task_desc'],

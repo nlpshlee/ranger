@@ -24,27 +24,32 @@ def to_str(input, indent=4):
         common_util.logging_error("json_util.to_str()", e)
         return ""
 
-def load_file_to_dict(in_file_path: str, encoding=ENCODING):
+def load_file(in_file_path: str, encoding=ENCODING):
     try:
         if file_util.exists(in_file_path):
             file = file_util.open_file(in_file_path, encoding, 'r')
 
             # 파일을 읽을 때는, load() 호출
-            json_dict = json.load(file)
+            datas = json.load(file)
+            print(f'json_util.load_file() {in_file_path} -> data_size : {len(datas)}')
 
-            return json_dict
+            return datas
 
     except Exception as e:
-        common_util.logging_error("json_util.load_file_to_dict()", e)
+        common_util.logging_error("json_util.load_file()", e)
         return None
 
     return None
 
 def write_file(input, out_file_path: str, encoding=ENCODING, indent=4):
     try:
+        file_util.make_parent(out_file_path)
+
         file = file_util.open_file(out_file_path, encoding, 'w')
         file.write(to_str(input, indent))
         file.close()
+
+        print(f'json_util.write_file() data_size : {len(input)} -> {out_file_path}')
         return True
 
     except Exception as e:
