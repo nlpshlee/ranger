@@ -1,3 +1,5 @@
+from _init import *
+
 # Copyright 2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,18 +44,19 @@ from transformers import (
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.utils import is_peft_available
 
-from ..data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
-from ..import_utils import is_vllm_available
-from ..models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
-from .callbacks import SyncRefModelCallback
-from .grpo_config import GRPOConfig
-from .utils import generate_model_card, get_comet_experiment_url, pad, selective_log_softmax
-from .new_grpo_package.repeat_sampler import RepeatRandomSampler # 클래스 떼서 새로 붙였답니다.
-from .new_grpo_package import init_utils
-from .new_grpo_package.prompt_processor import PromptProcessor # 1. 프롬프트 전처리 단계
-from .new_grpo_package.evaluation_utils import prediction_step as evaluation_prediction_step # 평가 함수
-from .new_grpo_package.logging_utils import log_metrics # 로깅 함수
-from .new_grpo_package.loss_utils import compute_loss as compute_loss_func # 손실 계산 함수
+from trl.data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
+from trl.import_utils import is_vllm_available
+from trl.models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
+from trl.trainer.callbacks import SyncRefModelCallback
+from trl.trainer.grpo_config import GRPOConfig
+from trl.trainer.utils import generate_model_card, get_comet_experiment_url, pad, selective_log_softmax
+
+from ranger.grpo.repeat_sampler import RepeatRandomSampler # 클래스 떼서 새로 붙였답니다.
+from ranger.grpo import init_utils
+from ranger.grpo.prompt_processor import PromptProcessor # 1. 프롬프트 전처리 단계
+from ranger.grpo.evaluation_utils import prediction_step as evaluation_prediction_step # 평가 함수
+from ranger.grpo.logging_utils import log_metrics # 로깅 함수
+from ranger.grpo.loss_utils import compute_loss as compute_loss_func # 손실 계산 함수
 
 
 if is_peft_available():
@@ -70,7 +73,7 @@ if is_wandb_available():
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
 
-class NewGRPOTrainer(Trainer):
+class RANGERTrainer(Trainer):
     """
     Group Relative Policy Optimization (GRPO) 방법을 위한 트레이너입니다. 이 알고리즘은 처음에
     [DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models](https://huggingface.co/papers/2402.03300) 논문에서 제안되었습니다.

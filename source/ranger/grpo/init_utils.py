@@ -2,7 +2,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, AutoModelForSequenceClassification
 from peft import get_peft_model
 
-from ..grpo_config import GRPOConfig
+from trl.trainer.grpo_config import GRPOConfig
 
 # 모델과 args를 확인하고, args가 None인 경우 기본 GRPO 설정을 생성하는 함수
 def check_args(model, args):

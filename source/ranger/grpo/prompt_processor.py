@@ -6,7 +6,7 @@ import torch
 from typing import Dict, List, Any, Union
 from transformers import PreTrainedTokenizerBase
 
-from ...data_utils import maybe_apply_chat_template
+from trl.data_utils import maybe_apply_chat_template
 
 
 class PromptProcessor:
