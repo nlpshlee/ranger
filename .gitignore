@@ -4,6 +4,7 @@ __pycache__
 .DS_Store
 *.gz
 elasticsearch-7.10.1
+data
 logs
 outputs
 unsloth_compiled_cache
