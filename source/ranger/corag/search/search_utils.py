@@ -1,7 +1,7 @@
 import requests
 import time
 from typing import List, Dict
-from search.logger_config import logger
+from .logger_config import logger
 
 
 def search_by_http(query: str, topk=5, host: str = 'localhost', port: int = 8000, timeout: int = 30) -> List[Dict]:
