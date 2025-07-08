@@ -298,7 +298,7 @@ class CoRagAgent:
             # 서브 스텝 마다, 최종 답변 확인
             self.check_final_answers(query_results)
 
-            print(f"{depth} 번째 Depth 종료, 총 경과 시간: {time.time() - start_time_depth}")
+            print(f"{depth} 번째 Depth 종료, 총 경과 시간: {time.time() - start_time_depth}\n")
 
             # 모든 체인이 중단되었는지 확인
             if self.check_all_stop(query_results):
