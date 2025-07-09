@@ -13,9 +13,10 @@ from ranger.corag.utils import batch_truncate
 from ranger.corag.data_utils import load_corpus
 from ranger.corag.config import Arguments
 
-from ranger.vllm.vllm_interface import VllmInterface
+from ranger.vllm.vllm_agent import VllmAgent
 
 
+MAX_TOKENS = 128
 IS_TEST = False
 
 
@@ -88,7 +89,7 @@ class ChainResult:
 
 
 class CoRagAgent:
-    def __init__(self, vllm_agent: VllmInterface, corpus: Dataset=load_corpus()):
+    def __init__(self, vllm_agent: VllmAgent, corpus: Dataset=load_corpus()):
         self._vllm_agent = vllm_agent
         self._corpus = corpus # 검색 대상 문서
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._vllm_agent._model_name)
@@ -160,7 +161,7 @@ class CoRagAgent:
                     chain_result._documents.append(documents)
 
     
-    def make_sub_answers(self, query_results: List[QueryResult], temperature=0.0, max_tokens=128):
+    def make_sub_answers(self, query_results: List[QueryResult], temperature=0.0, max_tokens=MAX_TOKENS):
         inputs = []
         for query_result in query_results:
             for chain_result in query_result._chain_results:
@@ -210,7 +211,7 @@ class CoRagAgent:
         return final_answer, log_probs
     
     
-    def predict_final_answer(self, path, temperature=0.0, max_tokens=128, topk=20):
+    def generate_step_final_answer(self, path, temperature=0.0, max_tokens=MAX_TOKENS, topk=20):
         args = Arguments()
         retriever_results: List[Dict] = search_by_http(query=path.query, topk=topk)
         context_doc_ids: List[str] = [res['id'] for res in retriever_results]
@@ -227,7 +228,8 @@ class CoRagAgent:
             task_desc=self._task_desc,
             documents=documents,
             max_length=args.max_len,
-            temperature=temperature, max_tokens=max_tokens
+            temperature=temperature,
+            max_tokens=max_tokens
         )
 
         return final_answer, log_probs
@@ -247,7 +249,7 @@ class CoRagAgent:
                         answer=query_result._answer
                     )
 
-                    final_answer, log_probs = self.predict_final_answer(rag_path)
+                    final_answer, log_probs = self.generate_step_final_answer(rag_path)
                     chain_result._final_answers.append(final_answer)
                     chain_result._log_probs_list.append(log_probs)
                     chain_result._scores.append(sum(log_probs) / len(log_probs))
@@ -286,7 +288,6 @@ class CoRagAgent:
         self._max_length = max_length
         self._temperature = temperature
         self._num_workers = num_workers
-        start_time_query = time.time()
 
         # 각 쿼리에 대한 결과 객체 초기화
         query_results = []

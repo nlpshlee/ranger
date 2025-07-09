@@ -4,7 +4,9 @@ import logging, time
 from datasets import load_dataset
 
 from ranger.modules import container_util, json_util
+from ranger.vllm.vllm_agent import VllmAgent
 from ranger.vllm.vllm_client import VllmClient
+from ranger.vllm.vllm_engine import VllmEngine
 from ranger.corag_agent import CoRagAgent
 
 
@@ -61,21 +63,46 @@ class ChainGenerateTime:
         print(f'\t[avg] chain time : {(chain_time_all / chain_size_all):.2f}, vllm called : {(called_cnt_all / chain_size_all):.2f}\n')
 
 
+
+
+
 class ChainGenerator:
     def __init__(self, vllm_config: dict):
         self._vllm_config = vllm_config
-        
-        # 서버 통신용
-        self._vllm_client = VllmClient(
-            model_name=self._vllm_config['model_name'],
-            host=self._vllm_config['host'],
-            port=self._vllm_config['port'],
-            api_key=self._vllm_config['api_key']
-        )
-
-        self._corag_agent = CoRagAgent(vllm_agent=self._vllm_client)
-
+        self._vllm_agent: VllmAgent = None
+        self._corag_agent: CoRagAgent = None
         self._chain_generate_time = ChainGenerateTime()
+
+        self._init_agents()
+    
+
+    def _init_agents(self):
+        # 서버 통신용
+        if all(key in self._vllm_config for key in ['model_name', 'host', 'port', 'api_key']):
+            self._vllm_agent = VllmClient(
+                model_name=self._vllm_config['model_name'],
+                host=self._vllm_config['host'],
+                port=self._vllm_config['port'],
+                api_key=self._vllm_config['api_key']
+            )
+            print(f'\n# ChainGenerator._init_agents() vllm_agent is [VllmClient]. vllm_config : {self._vllm_config}\n')
+
+        # 내부 엔진용
+        elif all(key in self._vllm_config for key in ['model_name', 'device', 'gpu_memory_utilization', 'dtype', 'max_model_len']):
+            self._vllm_agent = VllmEngine(
+                model_name=self._vllm_config['model_name'],
+                device=self._vllm_config['device'],
+                gpu_memory_utilization=self._vllm_config['gpu_memory_utilization'],
+                dtype=self._vllm_config['dtype'],
+                max_model_len=self._vllm_config['max_model_len']
+            )
+            print(f'\n# ChainGenerator._init_agents() vllm_agent is [VllmEngine]. vllm_config : {self._vllm_config}\n')
+
+        else:
+            print(f'\n# ChainGenerator._init_agents() vllm_config error : {self._vllm_config}\n')
+
+        if self._vllm_agent is not None:
+            self._corag_agent = CoRagAgent(vllm_agent=self._vllm_agent)
 
 
     def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False):
@@ -108,17 +135,37 @@ class ChainGenerator:
         self._chain_generate_time.print_time()
 
 
-if __name__ == "__main__":
-    work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
-    data_dir = f'{work_dir}/data/corag'
 
-    vllm_config = {
+
+
+def get_vllm_config_client():
+    return {
         "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",
         "task_desc": "answer multi-hop questions",
         'host': 'localhost',
         'port': 7030,
         'api_key': 'token-123'
     }
+
+
+def get_vllm_config_engine():
+    return {
+        "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",
+        "task_desc": "answer multi-hop questions",
+        'device': 'cuda:1',
+        'gpu_memory_utilization': 0.95,
+        'dtype': 'float16',
+        'max_model_len': 4096
+    }
+
+
+if __name__ == "__main__":
+    work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
+    data_dir = f'{work_dir}/data/corag'
+
+    # vllm_config = get_vllm_config_client()
+    vllm_config = get_vllm_config_engine()
+
     chain_generator = ChainGenerator(vllm_config)
 
     # download_datas('corag/multihopqa', 'hotpotqa', 'train', f'{data_dir}/input/multihopqa_train.json')
