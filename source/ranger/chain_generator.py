@@ -182,8 +182,8 @@ if __name__ == "__main__":
     work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
     data_dir = f'{work_dir}/data/corag'
 
-    vllm_config = get_vllm_config_client()
-    # vllm_config = get_vllm_config_engine()
+    # vllm_config = get_vllm_config_client()
+    vllm_config = get_vllm_config_engine()
 
     chain_generator = ChainGenerator(vllm_config)
 

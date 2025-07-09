@@ -5,10 +5,12 @@ from typing import Optional, List, Dict
 from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
+from ranger.modules.common_const import *
+from ranger.modules import string_util
+
 from ranger.corag.search.search_utils import search_by_http
 from ranger.corag.data_utils import format_documents_for_final_answer, format_input_context
 from ranger.corag.prompts import get_generate_subquery_prompt, get_generate_intermediate_answer_prompt, get_generate_final_answer_prompt
-from ranger.corag.agent.agent_utils import RagPath
 from ranger.corag.utils import batch_truncate
 from ranger.corag.data_utils import load_corpus
 from ranger.corag.config import Arguments
@@ -32,7 +34,7 @@ def _normalize_subquery(subquery: str):
     return subquery
 
 
-def _normalize_answer(text, punc_chars, punc_repl):
+def _normalize_answer(text, punc_chars=string.punctuation, punc_repl=""):
     def remove_articles(s):
         return re.sub(r"\b(a|an|the)\b", " ", s)
 
@@ -43,12 +45,21 @@ def _normalize_answer(text, punc_chars, punc_repl):
     def white_space_fix(s):
         return " ".join(s.split())
 
-    text = text.lower()
     text = replace_punctuation(text)
     text = remove_articles(text)
     text = white_space_fix(text)
 
     return text
+
+
+def _compare_answer(final_answer: str, answer: str, txt_option=TXT_OPTION.LOWER|TXT_OPTION.RM_SPACE):
+    final_answer = string_util.refine_txt(final_answer, txt_option)
+    answer = string_util.refine_txt(answer, txt_option)
+
+    if final_answer == answer:
+        return True
+
+    return False
 
 
 
@@ -60,14 +71,16 @@ class QueryResult:
         self._query = ''
         self._answer = ''
         self._chain_results = []
+        self._doc_ids = []
+        self._documents = []
 
 
 class ChainResult:
     def __init__(self) -> None:
         self._sub_querys = []
         self._sub_answers = []
-        self._doc_ids = []                  # 2차원 배열
-        self._documents = []
+        self._doc_ids_list = []             # 2차원 배열
+        self._documents_list = []           # 2차원 배열
         self._final_answers = []
         self._log_probs_list = []           # 2차원 배열
         self._scores = []
@@ -80,7 +93,7 @@ class ChainResult:
         print(f'\t[score]\t[sub_query]\t[doc_ids]\t[sub_answer]\t[final_answer]\n')
 
         for i in range(chain_depth):
-            print(f'\t{self._scores[i]}\t{self._sub_querys[i]}\t{self._doc_ids[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
+            print(f'\t{self._scores[i]}\t{self._sub_querys[i]}\t{self._doc_ids_list[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
         print()
 
 
@@ -95,6 +108,9 @@ class CoRagAgent:
 
         self._vllm_agent = vllm_agent
         self._corpus = corpus # 검색 대상 문서
+
+        self._corag_args = Arguments()
+
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._vllm_agent._model_name)
         self._lock = threading.Lock()
 
@@ -117,7 +133,7 @@ class CoRagAgent:
                 )[0]
 
 
-    def make_sub_querys(self, query_results: List[QueryResult]):
+    def generate_sub_querys(self, query_results: List[QueryResult]):
         inputs = []
 
         for query_result in query_results:
@@ -142,38 +158,38 @@ class CoRagAgent:
             return_toks_log_probs=False
         )
 
-        sub_batch_idx = 0
+        idx = 0
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    normalized_subquery = _normalize_subquery(sub_querys[sub_batch_idx])
-                    chain_result._sub_querys.append(normalized_subquery)
-                    sub_batch_idx += 1
+                    normalized_sub_query = _normalize_subquery(sub_querys[idx])
+                    chain_result._sub_querys.append(normalized_sub_query)
+                    idx += 1
 
 
-    def make_doc_ids(self, query_results: List[QueryResult]):
+    def search_doc_for_sub_query(self, query_results: List[QueryResult]):
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    retriever_results: List[Dict] = search_by_http(
+                    searcheds: List[Dict] = search_by_http(
                         query=chain_result._sub_querys[-1],
                         topk=self._top_k_sub_query
                     )
                     
-                    doc_ids = [res['id'] for res in retriever_results]
+                    doc_ids = [searched['id'] for searched in searcheds]
                     documents = [format_input_context(self._corpus[int(doc_id)]) for doc_id in doc_ids][::-1]
-                    chain_result._doc_ids.append(doc_ids)
-                    chain_result._documents.append(documents)
+                    chain_result._doc_ids_list.append(doc_ids)
+                    chain_result._documents_list.append(documents)
 
 
-    def make_sub_answers(self, query_results: List[QueryResult]):
+    def generate_sub_answers(self, query_results: List[QueryResult]):
         inputs = []
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
                     sub_answer_prompt = get_generate_intermediate_answer_prompt(
                             subquery=chain_result._sub_querys[-1],
-                            documents=chain_result._doc_ids[-1],
+                            documents=chain_result._doc_ids_list[-1],
                     )
                     self._truncate_long_messages(sub_answer_prompt)
                     inputs.append(sub_answer_prompt)
@@ -185,91 +201,77 @@ class CoRagAgent:
             return_toks_log_probs=False
         )
         
-        sub_batch_idx = 0
+        idx = 0
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    sub_answer = sub_answers[sub_batch_idx]
-                    chain_result._sub_answers.append(sub_answer)
-                    sub_batch_idx += 1
+                    normalized_sub_answer = _normalize_answer(sub_answers[idx])
+                    chain_result._sub_answers.append(normalized_sub_answer)
+                    idx += 1
 
 
-    def generate_final_answer(self, corag_sample: RagPath, task_desc: str, documents: Optional[List[str]]) -> str:
-        messages: List[Dict] = get_generate_final_answer_prompt(
-            query=corag_sample.query,
-            past_subqueries=corag_sample.past_subqueries or [],
-            past_subanswers=corag_sample.past_subanswers or [],
-            task_desc=task_desc,
-            documents=documents,
-        )
-        self._truncate_long_messages(messages)
+    def search_doc_for_query(self, query_results: List[QueryResult]):
+        for query_result in query_results:
+            searcheds: List[Dict] = search_by_http(
+                query=query_result._query,
+                topk=self._top_k_query
+            )
 
-        final_answer, (toks, log_probs) = self._vllm_agent.generate_batch(
-            messages=[messages],
-            max_token_gen=self._max_token_gen,
-            temperature=self._temperature,
-            return_toks_log_probs=True
-        )[0]
-
-        if IS_TEST:
-            print(f'\nfinal_answer : {final_answer}')
-
-            import math
-            for tok, log_prob in zip(toks, log_probs):
-                print(f'\ttok : {tok}, prob : {math.exp(log_prob)}')
-            print()
-
-        return final_answer, log_probs
+            query_result._doc_ids = [searched['id'] for searched in searcheds]
+            query_result._documents = format_documents_for_final_answer(
+                args=self._corag_args,
+                context_doc_ids=query_result._doc_ids,
+                tokenizer=self._tokenizer, corpus=self._corpus,
+                lock=self._lock
+            )
 
 
-    def generate_step_final_answer(self, path):
-        args = Arguments()
-        retriever_results: List[Dict] = search_by_http(
-            query=path.query,
-            topk=self._top_k_query
-        )
-        context_doc_ids: List[str] = [res['id'] for res in retriever_results]
-        
-        documents: List[str] = format_documents_for_final_answer(
-            args=args,
-            context_doc_ids=context_doc_ids,
-            tokenizer=self._tokenizer, corpus=self._corpus,
-            lock=self._lock
-        )
+    def check_step_final_answers(self, query_results: List[QueryResult]):
+        inputs = []
 
-        final_answer, log_probs = self.generate_final_answer(
-            corag_sample=path,
-            task_desc=self._task_desc,
-            documents=documents
-        )
-
-        return final_answer, log_probs
-
-
-    def check_final_answers(self, query_results: List[QueryResult]):
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    rag_path = RagPath(
-                        query_id=query_result._query_id,
+                    final_answer_prompt = get_generate_final_answer_prompt(
                         query=query_result._query,
-                        past_subqueries=chain_result._sub_querys,
-                        past_subanswers=chain_result._sub_answers,
-                        past_doc_ids=chain_result._doc_ids,
-                        past_finalanswers=chain_result._final_answers,
-                        answer=query_result._answer
+                        past_subqueries=chain_result._sub_querys or [],
+                        past_subanswers=chain_result._sub_answers or [],
+                        task_desc=self._task_desc,
+                        documents=query_result._documents,
                     )
 
-                    final_answer, log_probs = self.generate_step_final_answer(rag_path)
-                    chain_result._final_answers.append(final_answer)
+                    self._truncate_long_messages(final_answer_prompt)
+                    inputs.append(final_answer_prompt)
+        
+        final_answer_tok_log_probs_list = self._vllm_agent.generate_batch(
+            messages=inputs,
+            max_token_gen=self._max_token_gen,
+            temperature=0.0,
+            return_toks_log_probs=True
+        )
+
+        idx = 0
+        for query_result in query_results:
+            for chain_result in query_result._chain_results:
+                if not chain_result._is_stop:
+                    final_answer, (toks, log_probs) = final_answer_tok_log_probs_list[idx]
+                    normalized_final_answer = _normalize_answer(final_answer)
+                    chain_result._final_answers.append(normalized_final_answer)
                     chain_result._log_probs_list.append(log_probs)
                     chain_result._scores.append(sum(log_probs) / len(log_probs))
 
-                    check_a = _normalize_answer(final_answer, punc_chars=string.punctuation, punc_repl="")
-                    check_b = _normalize_answer(query_result._answer, punc_chars=string.punctuation, punc_repl="")
-
-                    if check_a == check_b:
+                    if _compare_answer(normalized_final_answer, query_result._answer):
                         chain_result._is_stop = True
+
+                    idx += 1
+
+                    if IS_TEST:
+                        print(f'\nfinal_answer : {normalized_final_answer}')
+
+                        import math
+                        for tok, log_prob in zip(toks, log_probs):
+                            print(f'\ttok : {tok}, prob : {math.exp(log_prob)}')
+                        print()
 
 
     def check_all_stop(self, query_results: List[QueryResult]):
@@ -295,9 +297,11 @@ class CoRagAgent:
             query_result = QueryResult()
             query_result._query_id = data['query_id']
             query_result._query = data['query']
-            query_result._answer = data['answers'][0]
+            query_result._answer = _normalize_answer(data['answers'][0])
             query_result._chain_results = [ChainResult() for _ in range(n_chains)]
             query_results.append(query_result)
+        
+        self.search_doc_for_query(query_results)
         
         # 각 depth마다 서브쿼리 생성 및 처리
         for depth in range(chain_depth):
@@ -305,16 +309,16 @@ class CoRagAgent:
             start_time_depth = time.time()
 
             # 서브 쿼리 생성
-            self.make_sub_querys(query_results)
+            self.generate_sub_querys(query_results)
 
-            # # 문서 검색
-            self.make_doc_ids(query_results)
+            # 문서 검색
+            self.search_doc_for_sub_query(query_results)
 
             # 서브 답변 생성
-            self.make_sub_answers(query_results)
+            self.generate_sub_answers(query_results)
 
             # 서브 스텝 마다, 최종 답변 확인
-            self.check_final_answers(query_results)
+            self.check_step_final_answers(query_results)
 
             print(f"{depth} 번째 Depth 종료, 총 경과 시간: {time.time() - start_time_depth}\n")
 
