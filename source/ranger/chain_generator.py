@@ -53,14 +53,15 @@ class ChainGenerateTime:
 
         for i, chain_time in enumerate(self._chain_generate_times):
             chain_size = self._chain_generate_sizes[i]
+            chain_time_avg = chain_time / chain_size
             called_cnt = self._vllm_called_cnts[i]
-            print(f'\t[{i+1} batch] chain size : {chain_size}, chain time : {chain_time}, vllm called : {called_cnt}')
+            print(f'\t[{i+1} batch] chain_size : {chain_size}, chain_time : {chain_time} (avg : {chain_time_avg:.2f}), vllm_called : {called_cnt}')
         
         chain_size_all = sum(self._chain_generate_sizes)
         chain_time_all = sum(self._chain_generate_times)
         called_cnt_all = sum(self._vllm_called_cnts)
-        print(f'\t[all] chain size : {chain_size_all}, chain time : {chain_time_all:.2f}, vllm called : {called_cnt_all}')
-        print(f'\t[avg] chain time : {(chain_time_all / chain_size_all):.2f}, vllm called : {(called_cnt_all / chain_size_all):.2f}\n')
+        print(f'\n\t[all] chain_size : {chain_size_all}, chain_time : {chain_time_all:.2f}, vllm_called : {called_cnt_all}')
+        print(f'\t[avg] chain_time : {(chain_time_all / chain_size_all):.2f}, vllm_called : {(called_cnt_all / chain_size_all):.2f}\n')
 
 
 
@@ -113,11 +114,13 @@ class ChainGenerator:
             )
 
 
-    def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False):
-        print(f'\nChainGenerator.chain_generate() data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+    def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False, do_reset=True):
+        print(f'\n# ChainGenerator.chain_generate() data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+        if do_reset:
+            self._corag_agent.reset()
 
         for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
-            print(f'batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {(i+1)*batch_size-1})\n')
+            print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {(i+1)*batch_size-1})\n')
 
             self._chain_generate_time.check_time()
 
@@ -142,6 +145,7 @@ class ChainGenerator:
                 print()
         
         # 체인 생성 경과 시간 출력
+        print(f'# ChainGenerator.chain_generate() data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         self._chain_generate_time.print_time()
 
 
@@ -156,7 +160,7 @@ def get_vllm_config_client():
         'port': 7030,
         'api_key': 'token-123',
         'max_model_len': 4096,
-        'max_token_gen': 32,
+        'max_token_gen': 128,
         'temperature': 0.7,
         'top_k_query': 20,
         'top_k_sub_query': 5
@@ -171,7 +175,7 @@ def get_vllm_config_engine():
         'gpu_memory_utilization': 0.9,
         'dtype': 'float16',
         'max_model_len': 4096,
-        'max_token_gen': 32,
+        'max_token_gen': 128,
         'temperature': 0.7,
         'top_k_query': 20,
         'top_k_sub_query': 5
@@ -193,8 +197,8 @@ if __name__ == "__main__":
     datas = json_util.load_file(f'{data_dir}/input/multihopqa_valid.json')
     chain_generator.chain_generate(datas[:5], 2, 3, 5, do_print=True)
 
-    # chain_generator.chain_generate(datas[:100], 100, 10, 5, do_print=True)
-    # chain_generator.chain_generate(datas[:1000], 1000, 10, 5, do_print=True)
-    # chain_generator.chain_generate(datas[:1000], 500, 10, 5, do_print=True)
-    # chain_generator.chain_generate(datas[:1000], 100, 10, 5, do_print=True)
+    # chain_generator.chain_generate(datas[:100], 100, 10, 5, do_print=False)
+    # chain_generator.chain_generate(datas[:1000], 1000, 10, 5, do_print=False)
+    # chain_generator.chain_generate(datas[:1000], 500, 10, 5, do_print=False)
+    # chain_generator.chain_generate(datas[:1000], 100, 10, 5, do_print=False)
 

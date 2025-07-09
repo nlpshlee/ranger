@@ -36,11 +36,6 @@ class VllmClient(VllmAgent):
 
 
     def _make_generate_result(self, completion: ChatCompletion, return_toks_log_probs: bool, do_print: bool) -> Union[str, Tuple[str, Any]]:
-        self._called_cnt += 1
-        if do_print:
-            if self._called_cnt % 1000 == 0:
-                print(f'VllmClient vllm called_cnt : {self._called_cnt}')
-
         generated_text = self._get_generated_text(completion)
 
         if not return_toks_log_probs:
@@ -60,8 +55,15 @@ class VllmClient(VllmAgent):
             temperature=temperature,
             logprobs=1
         )
+
+        result = self._make_generate_result(completion, return_toks_log_probs, do_print)
+
+        self._called_cnt += 1
+        if do_print:
+            if self._called_cnt % 1000 == 0:
+                print(f'VllmClient vllm called_cnt : {self._called_cnt}')
         
-        return self._make_generate_result(completion, return_toks_log_probs, do_print)
+        return result
 
 
     def generate_batch(self, messages: List[List[Dict]], max_token_gen: int, temperature: int,

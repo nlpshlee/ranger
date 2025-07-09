@@ -121,6 +121,12 @@ class CoRagAgent:
         self._top_k_query = top_k_query
         self._top_k_sub_query = top_k_sub_query
 
+        self._batch_idx = 0
+    
+
+    def reset(self):
+        self._batch_idx = 0
+
 
     def _truncate_long_messages(self, messages: List[Dict]):
         for msg in messages:
@@ -289,6 +295,7 @@ class CoRagAgent:
 
 
     def generate_batch(self, task_desc: str, datas: list, n_chains: int, chain_depth: int) -> List[QueryResult]:
+        self._batch_idx += 1
         self._task_desc = task_desc
 
         # 각 쿼리에 대한 결과 객체 초기화
@@ -305,7 +312,7 @@ class CoRagAgent:
         
         # 각 depth마다 서브쿼리 생성 및 처리
         for depth in range(chain_depth):
-            print(f"{'='*50}\nDepth {depth} Start\n{'='*50}\n")
+            print(f"{'='*50}\n[{self._batch_idx} Batch] {depth+1} Depth Start\n{'='*50}\n")
             start_time_depth = time.time()
 
             # 서브 쿼리 생성
@@ -320,7 +327,7 @@ class CoRagAgent:
             # 서브 스텝 마다, 최종 답변 확인
             self.check_step_final_answers(query_results)
 
-            print(f"{depth} 번째 Depth 종료, 총 경과 시간: {time.time() - start_time_depth}\n")
+            print(f"\n[{self._batch_idx} Batch] {depth+1} Depth End, Elapsed Time (s) : {(time.time()-start_time_depth):.2f}\n")
 
             # 모든 체인이 중단되었는지 확인
             if self.check_all_stop(query_results):

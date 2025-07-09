@@ -78,14 +78,10 @@ class VllmEngine(VllmAgent):
             use_tqdm=False
         )
 
-        # print(f'\n\n\n{req_outputs}\n\n\n')
-
         results = []
         for req_output in req_outputs:
             completion: CompletionOutput = req_output.outputs[0]
             results.append(self._make_generate_result(completion, return_toks_log_probs, do_print))
-        
-        # print(f'\n\n\n{results}\n\n\n')
         
         self._called_cnt += 1
         if do_print:
