@@ -11,7 +11,7 @@ from ranger.vllm.vllm_agent import VllmAgent
 
 
 class VllmEngine(VllmAgent):
-    def __init__(self, model_name: str, device='cuda:0', gpu_memory_utilization=0.95, dtype='float16', max_model_len=4096):
+    def __init__(self, model_name: str, device: str, gpu_memory_utilization: float, dtype: str, max_model_len: int):
         super().__init__()
 
         self._model_name = model_name
@@ -25,8 +25,8 @@ class VllmEngine(VllmAgent):
             device=self._device,
             gpu_memory_utilization=self._gpu_memory_utilization,
             dtype=self._dtype,
-            enable_prefix_caching=True, # 프리픽스 캐싱 활성화(성능 향상)
-            max_model_len=self._max_model_len
+            max_model_len=self._max_model_len,          # 없으면, 에러남
+            enable_prefix_caching=True                  # 프리픽스 캐싱 활성화(성능 향상)
         )
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._model_name)
         self._called_cnt = 0
@@ -53,35 +53,43 @@ class VllmEngine(VllmAgent):
         return toks, log_probs
 
 
-    def generate(self, messages: List[Dict], return_toks_log_probs=False, do_print=True, **kwargs) -> Union[str, Tuple[str, Any]]:
-        prompts = [msg["content"] for msg in messages]
+    def _make_generate_result(self, completion: CompletionOutput, return_toks_log_probs: bool, do_print: bool) -> Union[str, Tuple[str, Any]]:
+        generated_text = self._get_generated_text(completion)
 
-        if 'max_tokens' in kwargs.keys():
-            sampling_params = SamplingParams(temperature=kwargs['temperature'], logprobs=1, max_tokens=kwargs['max_tokens'])
+        if not return_toks_log_probs:
+            return generated_text
         else:
-            sampling_params = SamplingParams(temperature=kwargs['temperature'], logprobs=1)
+            toks, log_probs = self._get_generated_toks_log_probs(completion)
+            return generated_text, (toks, log_probs)
 
-        req_output: RequestOutput = self._llm.generate(
-            prompts,
+
+    def generate_batch(self, messages: List[List[Dict]], max_token_gen: int, temperature: int,
+                       return_toks_log_probs=False, do_print=True) -> List[Union[str, Tuple[str, Any]]]:
+        
+        sampling_params = SamplingParams(
+            max_tokens=max_token_gen,
+            temperature=temperature,
+            logprobs=1
+        )
+
+        req_outputs: List[RequestOutput] = self._llm.chat(
+            messages,
             sampling_params=sampling_params,
             use_tqdm=False
-        )[0]
+        )
 
-        completion: CompletionOutput = req_output.outputs[0]
+        # print(f'\n\n\n{req_outputs}\n\n\n')
 
-        return self._return_generate(completion, return_toks_log_probs, do_print)
-
-
-    def generate_batch(self, messages: List[List[Dict]], return_toks_log_probs=False, num_workers=4, do_print=True, **kwargs) -> List[Union[str, Tuple[str, Any]]]:
         results = []
-
-        for m in messages:
-            # vllm.LLM 은 싱글 스레드로만 쓸 수 있다는데..?
-            results.append(self.generate(m, return_toks_log_probs, do_print, **kwargs))
+        for req_output in req_outputs:
+            completion: CompletionOutput = req_output.outputs[0]
+            results.append(self._make_generate_result(completion, return_toks_log_probs, do_print))
         
+        # print(f'\n\n\n{results}\n\n\n')
+        
+        self._called_cnt += 1
         if do_print:
-            if self._called_cnt % 1000 != 0:
-                print(f'VllmEngine.generate_batch() called_cnt : {self._called_cnt}\n')
+            print(f'VllmEngine vllm called_cnt : {self._called_cnt}')
         
         return results
 

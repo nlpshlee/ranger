@@ -11,6 +11,8 @@ class VllmAgent(ABC):
         super().__init__()
 
         self._model_name: str
+        self._max_model_len: int
+        self._max_token_gen: int
         self._called_cnt: int
     
 
@@ -24,26 +26,26 @@ class VllmAgent(ABC):
         pass
 
 
-    def _return_generate(self, completion: Any, return_toks_log_probs: bool, do_print: bool) -> Union[str, Tuple[str, Any]]:
-        self._called_cnt += 1
-        if do_print:
-            if self._called_cnt % 1000 == 0:
-                print(f'{self.__class__.__name__}._return_generate() called_cnt : {self._called_cnt}')
-
-        generated_text = self._get_generated_text(completion)
-
-        if not return_toks_log_probs:
-            return generated_text
-        else:
-            toks, log_probs = self._get_generated_toks_log_probs(completion)
-            return generated_text, (toks, log_probs)
-
-
     @abstractmethod
-    def generate(self, messages: List[Dict], return_toks_log_probs=False, **kwargs) -> Union[str, Tuple[str, Any]]:
+    def _make_generate_result(self,
+                              completion: Any,
+                              return_toks_log_probs: bool) -> Union[str, Tuple[str, Any]]:
         pass
 
+
+    # @abstractmethod
+    # def generate(self,
+    #              messages: List[Dict],
+    #              max_token_gen: int,
+    #              temperature: int,
+    #              return_toks_log_probs=False) -> Union[str, Tuple[str, Any]]:
+    #     pass
+
     @abstractmethod
-    def generate_batch(self, messages: List[List[Dict]], return_toks_log_probs=False, num_workers=4, **kwargs) -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self,
+                       messages: List[List[Dict]],
+                       max_token_gen: int,
+                       temperature: int,
+                       return_toks_log_probs=False) -> List[Union[str, Tuple[str, Any]]]:
         pass
 

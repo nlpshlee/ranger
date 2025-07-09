@@ -6,7 +6,7 @@ from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from ranger.corag.search.search_utils import search_by_http
-from ranger.corag.data_utils import format_documents_for_final_answer, format_input_context, parse_answer_logprobs
+from ranger.corag.data_utils import format_documents_for_final_answer, format_input_context
 from ranger.corag.prompts import get_generate_subquery_prompt, get_generate_intermediate_answer_prompt, get_generate_final_answer_prompt
 from ranger.corag.agent.agent_utils import RagPath
 from ranger.corag.utils import batch_truncate
@@ -16,7 +16,6 @@ from ranger.corag.config import Arguments
 from ranger.vllm.vllm_agent import VllmAgent
 
 
-MAX_TOKENS = 128
 IS_TEST = False
 
 
@@ -89,31 +88,32 @@ class ChainResult:
 
 
 class CoRagAgent:
-    def __init__(self, vllm_agent: VllmAgent, corpus: Dataset=load_corpus()):
+    def __init__(self,
+                 vllm_agent: VllmAgent, max_model_len: int, max_token_gen: int, temperature: float,
+                 top_k_query: int, top_k_sub_query: int,
+                 corpus: Dataset=load_corpus()):
+
         self._vllm_agent = vllm_agent
         self._corpus = corpus # 검색 대상 문서
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._vllm_agent._model_name)
         self._lock = threading.Lock()
 
         self._task_desc: str
-        self._n_chains: int
-        self._chain_depth: int
-        self._max_length: int
-        self._temperature: int
-        self._num_workers: int
+        self._max_model_len = max_model_len
+        self._max_token_gen = max_token_gen
+        self._temperature = temperature
+        self._top_k_query = top_k_query
+        self._top_k_sub_query = top_k_sub_query
 
 
-    def _truncate_long_messages(self, messages: List[Dict], max_length=-1):
-        if max_length == -1:
-            max_length = self._max_length
-
+    def _truncate_long_messages(self, messages: List[Dict]):
         for msg in messages:
-            if len(msg['content']) < 2 * max_length:
+            if len(msg['content']) < 2 * self._max_model_len:
                 continue
 
             with self._lock:
                 msg['content'] = batch_truncate(
-                    [msg['content']], tokenizer=self._tokenizer, max_length=max_length, truncate_from_middle=True
+                    [msg['content']], tokenizer=self._tokenizer, max_length=self._max_model_len, truncate_from_middle=True
                 )[0]
 
 
@@ -137,7 +137,9 @@ class CoRagAgent:
         # VLLM을 통해 서브쿼리 생성
         sub_querys = self._vllm_agent.generate_batch(
             messages=inputs,
-            temperature=self._temperature
+            max_token_gen=self._max_token_gen,
+            temperature=self._temperature,
+            return_toks_log_probs=False
         )
 
         sub_batch_idx = 0
@@ -147,21 +149,24 @@ class CoRagAgent:
                     normalized_subquery = _normalize_subquery(sub_querys[sub_batch_idx])
                     chain_result._sub_querys.append(normalized_subquery)
                     sub_batch_idx += 1
-    
+
 
     def make_doc_ids(self, query_results: List[QueryResult]):
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    retriever_results: List[Dict] = search_by_http(query=chain_result._sub_querys[-1])
+                    retriever_results: List[Dict] = search_by_http(
+                        query=chain_result._sub_querys[-1],
+                        topk=self._top_k_sub_query
+                    )
                     
                     doc_ids = [res['id'] for res in retriever_results]
                     documents = [format_input_context(self._corpus[int(doc_id)]) for doc_id in doc_ids][::-1]
                     chain_result._doc_ids.append(doc_ids)
                     chain_result._documents.append(documents)
 
-    
-    def make_sub_answers(self, query_results: List[QueryResult], temperature=0.0, max_tokens=MAX_TOKENS):
+
+    def make_sub_answers(self, query_results: List[QueryResult]):
         inputs = []
         for query_result in query_results:
             for chain_result in query_result._chain_results:
@@ -175,8 +180,9 @@ class CoRagAgent:
 
         sub_answers = self._vllm_agent.generate_batch(
             messages=inputs,
-            temperature=temperature, 
-            max_tokens=max_tokens
+            max_token_gen=self._max_token_gen,
+            temperature=self._temperature,
+            return_toks_log_probs=False
         )
         
         sub_batch_idx = 0
@@ -188,7 +194,7 @@ class CoRagAgent:
                     sub_batch_idx += 1
 
 
-    def generate_final_answer(self, corag_sample: RagPath, task_desc: str, documents: Optional[List[str]], max_length: int, **kwargs) -> str:
+    def generate_final_answer(self, corag_sample: RagPath, task_desc: str, documents: Optional[List[str]]) -> str:
         messages: List[Dict] = get_generate_final_answer_prompt(
             query=corag_sample.query,
             past_subqueries=corag_sample.past_subqueries or [],
@@ -196,9 +202,14 @@ class CoRagAgent:
             task_desc=task_desc,
             documents=documents,
         )
-        self._truncate_long_messages(messages, max_length=max_length)
+        self._truncate_long_messages(messages)
 
-        final_answer, (toks, log_probs) = self._vllm_agent.generate(messages=messages, return_toks_log_probs=True, **kwargs)
+        final_answer, (toks, log_probs) = self._vllm_agent.generate_batch(
+            messages=[messages],
+            max_token_gen=self._max_token_gen,
+            temperature=self._temperature,
+            return_toks_log_probs=True
+        )[0]
 
         if IS_TEST:
             print(f'\nfinal_answer : {final_answer}')
@@ -209,11 +220,14 @@ class CoRagAgent:
             print()
 
         return final_answer, log_probs
-    
-    
-    def generate_step_final_answer(self, path, temperature=0.0, max_tokens=MAX_TOKENS, topk=20):
+
+
+    def generate_step_final_answer(self, path):
         args = Arguments()
-        retriever_results: List[Dict] = search_by_http(query=path.query, topk=topk)
+        retriever_results: List[Dict] = search_by_http(
+            query=path.query,
+            topk=self._top_k_query
+        )
         context_doc_ids: List[str] = [res['id'] for res in retriever_results]
         
         documents: List[str] = format_documents_for_final_answer(
@@ -226,10 +240,7 @@ class CoRagAgent:
         final_answer, log_probs = self.generate_final_answer(
             corag_sample=path,
             task_desc=self._task_desc,
-            documents=documents,
-            max_length=args.max_len,
-            temperature=temperature,
-            max_tokens=max_tokens
+            documents=documents
         )
 
         return final_answer, log_probs
@@ -254,9 +265,12 @@ class CoRagAgent:
                     chain_result._log_probs_list.append(log_probs)
                     chain_result._scores.append(sum(log_probs) / len(log_probs))
 
-                    if _normalize_answer(final_answer, punc_chars=string.punctuation, punc_repl="") == _normalize_answer(query_result._answer, punc_chars=string.punctuation, punc_repl=""):
+                    check_a = _normalize_answer(final_answer, punc_chars=string.punctuation, punc_repl="")
+                    check_b = _normalize_answer(query_result._answer, punc_chars=string.punctuation, punc_repl="")
+
+                    if check_a == check_b:
                         chain_result._is_stop = True
-    
+
 
     def check_all_stop(self, query_results: List[QueryResult]):
         all_stopped = True
@@ -272,22 +286,8 @@ class CoRagAgent:
         return all_stopped
 
 
-    def generate_batch(
-            self, task_desc: str,
-            datas: list,
-            n_chains: int,
-            chain_depth: int,
-            max_length=4096,
-            temperature=0.7,
-            num_workers=4,
-            **kwargs
-    ) -> List[QueryResult]:
+    def generate_batch(self, task_desc: str, datas: list, n_chains: int, chain_depth: int) -> List[QueryResult]:
         self._task_desc = task_desc
-        self._n_chains = n_chains
-        self._chain_depth = chain_depth
-        self._max_length = max_length
-        self._temperature = temperature
-        self._num_workers = num_workers
 
         # 각 쿼리에 대한 결과 객체 초기화
         query_results = []

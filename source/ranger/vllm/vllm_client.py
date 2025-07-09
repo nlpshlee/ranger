@@ -33,29 +33,48 @@ class VllmClient(VllmAgent):
             log_probs.append(completion_tok_logprob.logprob)
         
         return toks, log_probs
-    
 
-    def generate(self, messages: List[Dict], return_toks_log_probs=False, do_print=True, **kwargs) -> Union[str, Tuple[str, Any]]:
+
+    def _make_generate_result(self, completion: ChatCompletion, return_toks_log_probs: bool, do_print: bool) -> Union[str, Tuple[str, Any]]:
+        self._called_cnt += 1
+        if do_print:
+            if self._called_cnt % 1000 == 0:
+                print(f'VllmClient vllm called_cnt : {self._called_cnt}')
+
+        generated_text = self._get_generated_text(completion)
+
+        if not return_toks_log_probs:
+            return generated_text
+        else:
+            toks, log_probs = self._get_generated_toks_log_probs(completion)
+            return generated_text, (toks, log_probs)
+
+
+    def _generate(self, messages: List[Dict], max_token_gen: int, temperature: int,
+                 return_toks_log_probs=False, do_print=True) -> Union[str, Tuple[str, Any]]:
+
         completion: ChatCompletion = self._client.chat.completions.create(
             model=self._model_name,
             messages=messages,
-            logprobs=1,
-            **kwargs
+            max_tokens=max_token_gen,
+            temperature=temperature,
+            logprobs=1
         )
         
-        return self._return_generate(completion, return_toks_log_probs, do_print)
+        return self._make_generate_result(completion, return_toks_log_probs, do_print)
 
 
-    def generate_batch(self, messages: List[List[Dict]], return_toks_log_probs=False, num_workers=4, do_print=True, **kwargs) -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self, messages: List[List[Dict]], max_token_gen: int, temperature: int,
+                       return_toks_log_probs=False, num_workers=4, do_print=True) -> List[Union[str, Tuple[str, Any]]]:
+
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             results = list(executor.map(
-                lambda m: self.generate(m, return_toks_log_probs, do_print, **kwargs),
-                messages
+                lambda m: self._generate(m, max_token_gen, temperature, return_toks_log_probs, do_print), messages
             ))
         
             if do_print:
                 if self._called_cnt % 1000 != 0:
-                    print(f'VllmClient.generate_batch() called_cnt : {self._called_cnt}\n')
+                    print(f'VllmClient vllm called_cnt : {self._called_cnt}')
             
             return results
 

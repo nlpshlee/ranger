@@ -69,6 +69,7 @@ class ChainGenerateTime:
 class ChainGenerator:
     def __init__(self, vllm_config: dict):
         self._vllm_config = vllm_config
+
         self._vllm_agent: VllmAgent = None
         self._corag_agent: CoRagAgent = None
         self._chain_generate_time = ChainGenerateTime()
@@ -88,7 +89,7 @@ class ChainGenerator:
             print(f'\n# ChainGenerator._init_agents() vllm_agent is [VllmClient]. vllm_config : {self._vllm_config}\n')
 
         # 내부 엔진용
-        elif all(key in self._vllm_config for key in ['model_name', 'device', 'gpu_memory_utilization', 'dtype', 'max_model_len']):
+        elif all(key in self._vllm_config for key in ['model_name', 'device', 'gpu_memory_utilization', 'dtype']):
             self._vllm_agent = VllmEngine(
                 model_name=self._vllm_config['model_name'],
                 device=self._vllm_config['device'],
@@ -102,10 +103,19 @@ class ChainGenerator:
             print(f'\n# ChainGenerator._init_agents() vllm_config error : {self._vllm_config}\n')
 
         if self._vllm_agent is not None:
-            self._corag_agent = CoRagAgent(vllm_agent=self._vllm_agent)
+            self._corag_agent = CoRagAgent(
+                self._vllm_agent,
+                self._vllm_config['max_model_len'],
+                self._vllm_config['max_token_gen'],
+                self._vllm_config['temperature'],
+                self._vllm_config['top_k_query'],
+                self._vllm_config['top_k_sub_query']
+            )
 
 
     def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False):
+        print(f'\nChainGenerator.chain_generate() data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+
         for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
             print(f'batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {(i+1)*batch_size-1})\n')
 
@@ -144,7 +154,12 @@ def get_vllm_config_client():
         "task_desc": "answer multi-hop questions",
         'host': 'localhost',
         'port': 7030,
-        'api_key': 'token-123'
+        'api_key': 'token-123',
+        'max_model_len': 4096,
+        'max_token_gen': 32,
+        'temperature': 0.7,
+        'top_k_query': 20,
+        'top_k_sub_query': 5
     }
 
 
@@ -153,9 +168,13 @@ def get_vllm_config_engine():
         "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",
         "task_desc": "answer multi-hop questions",
         'device': 'cuda:1',
-        'gpu_memory_utilization': 0.95,
+        'gpu_memory_utilization': 0.9,
         'dtype': 'float16',
-        'max_model_len': 4096
+        'max_model_len': 4096,
+        'max_token_gen': 32,
+        'temperature': 0.7,
+        'top_k_query': 20,
+        'top_k_sub_query': 5
     }
 
 
@@ -163,8 +182,8 @@ if __name__ == "__main__":
     work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
     data_dir = f'{work_dir}/data/corag'
 
-    # vllm_config = get_vllm_config_client()
-    vllm_config = get_vllm_config_engine()
+    vllm_config = get_vllm_config_client()
+    # vllm_config = get_vllm_config_engine()
 
     chain_generator = ChainGenerator(vllm_config)
 
