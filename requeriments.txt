@@ -188,3 +188,5 @@ zipp==3.23.0
 pyserini==1.1.0
 Levenshtein==0.27.1
 sentence-transformers==5.0.0
+statsmodels==0.14.5
+spacy==3.8.7

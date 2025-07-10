@@ -1,13 +1,14 @@
 from _init import *
 
 import logging, time
+from typing import List
 from datasets import load_dataset
 
-from ranger.modules import container_util, json_util
+from ranger.modules import common_util, container_util, json_util
 from ranger.vllm.vllm_agent import VllmAgent
 from ranger.vllm.vllm_client import VllmClient
 from ranger.vllm.vllm_engine import VllmEngine
-from ranger.corag_agent import CoRagAgent
+from ranger.corag_agent import QueryResult, ChainResult, CoRagAgent
 
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -68,15 +69,17 @@ class ChainGenerateTime:
 
 
 class ChainGenerator:
-    def __init__(self, vllm_config: dict):
+    def __init__(self, vllm_config: dict, use_gpu_ids=[0, 1]):
         self._vllm_config = vllm_config
+        self._use_gpu_ids = use_gpu_ids
 
         self._vllm_agent: VllmAgent = None
         self._corag_agent: CoRagAgent = None
         self._chain_generate_time = ChainGenerateTime()
 
         self._init_agents()
-    
+        common_util.check_gpu_memory(self._use_gpu_ids, '[Chain Generator Init]')
+
 
     def _init_agents(self):
         # 서버 통신용
@@ -114,17 +117,19 @@ class ChainGenerator:
             )
 
 
-    def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False, do_reset=True):
-        print(f'\n# ChainGenerator.chain_generate() data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+    def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False, do_reset=False):
+        print(f'# ChainGenerator.chain_generate() [start] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         if do_reset:
             self._corag_agent.reset()
+        
+        results = []
 
         for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
             print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {(i+1)*batch_size-1})\n')
 
             self._chain_generate_time.check_time()
 
-            chains = self._corag_agent.generate_batch(
+            query_results: List[QueryResult] = self._corag_agent.generate_batch(
                 task_desc=self._vllm_config['task_desc'],
                 datas=datas_batch,
                 n_chains=n_chains,
@@ -137,16 +142,22 @@ class ChainGenerator:
             )
 
             if do_print:
-                for query_result in chains:
+                for query_result in query_results:
                     print(f'query_id : {query_result._query_id}, query : {query_result._query}, answer : {query_result._answer}\n')
-                    for chain_idx, chain_result in enumerate(query_result._chain_results):
+
+                    chain_results: List[ChainResult] = query_result._chain_results
+                    for chain_idx, chain_result in enumerate(chain_results):
                         print(f'chain_idx : {chain_idx}')
                         chain_result.print_chain()
                 print()
+            
+            results.append(query_results)
         
         # 체인 생성 경과 시간 출력
-        print(f'# ChainGenerator.chain_generate() data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+        print(f'# ChainGenerator.chain_generate() [end] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         self._chain_generate_time.print_time()
+
+        return results
 
 
 
@@ -195,10 +206,10 @@ if __name__ == "__main__":
     # download_datas('corag/multihopqa', 'hotpotqa', 'validation', f'{data_dir}/input/multihopqa_valid.json')
 
     datas = json_util.load_file(f'{data_dir}/input/multihopqa_valid.json')
-    chain_generator.chain_generate(datas[:5], 2, 3, 5, do_print=True)
+    chain_generator.chain_generate(datas[:5], 2, 3, 5, do_print=True, do_reset=True)
 
-    # chain_generator.chain_generate(datas[:100], 100, 10, 5, do_print=False)
-    # chain_generator.chain_generate(datas[:1000], 1000, 10, 5, do_print=False)
-    # chain_generator.chain_generate(datas[:1000], 500, 10, 5, do_print=False)
-    # chain_generator.chain_generate(datas[:1000], 100, 10, 5, do_print=False)
+    # chain_generator.chain_generate(datas[:100], 100, 10, 5, do_print=False, do_reset=True)
+    # chain_generator.chain_generate(datas[:1000], 1000, 10, 5, do_print=False, do_reset=True)
+    # chain_generator.chain_generate(datas[:1000], 500, 10, 5, do_print=False, do_reset=True)
+    # chain_generator.chain_generate(datas[:1000], 100, 10, 5, do_print=False, do_reset=True)
 

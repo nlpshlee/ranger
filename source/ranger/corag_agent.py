@@ -83,18 +83,19 @@ class ChainResult:
         self._documents_list = []           # 2차원 배열
         self._final_answers = []
         self._log_probs_list = []           # 2차원 배열
-        self._scores = []
+        self._log_likes = []
         self._is_stop = False
+        self._reward = -1                   # 0 ~ 1
     
 
     def print_chain(self):
         chain_depth = len(self._sub_querys)
         print(f'ChainResult.print_chain() is_stop(correct) : {self._is_stop}, chain_depth : {chain_depth}')
-        print(f'\t[score]\t[sub_query]\t[doc_ids]\t[sub_answer]\t[final_answer]\n')
+        print(f'\t[log_like]\t[sub_query]\t[doc_ids]\t[sub_answer]\t[final_answer]\n')
 
         for i in range(chain_depth):
-            print(f'\t{self._scores[i]}\t{self._sub_querys[i]}\t{self._doc_ids_list[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
-        print()
+            print(f'\t{self._log_likes[i]}\t{self._sub_querys[i]}\t{self._doc_ids_list[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
+        print(f'\n\treward : {self._reward}\n')
 
 
 
@@ -264,7 +265,7 @@ class CoRagAgent:
                     normalized_final_answer = _normalize_answer(final_answer)
                     chain_result._final_answers.append(normalized_final_answer)
                     chain_result._log_probs_list.append(log_probs)
-                    chain_result._scores.append(sum(log_probs) / len(log_probs))
+                    chain_result._log_likes.append(sum(log_probs) / len(log_probs))
 
                     if _compare_answer(normalized_final_answer, query_result._answer):
                         chain_result._is_stop = True
