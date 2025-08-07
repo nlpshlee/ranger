@@ -16,13 +16,13 @@ from ranger.corag.config import Arguments
 
 
 # logger config
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+# logger = logging.getLogger(__name__)
+# logger.setLevel(logging.INFO)
+# if not logger.handlers:
+#     handler = logging.StreamHandler()
+#     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+#     handler.setFormatter(formatter)
+#     logger.addHandler(handler)
 
 
 def batch_truncate(
@@ -51,19 +51,19 @@ def batch_truncate(
 
 def load_used_corpus() -> Dataset:
     corpus = load_from_disk("/home/stv10121/saltlux/data/kilt-corpus-used-dataset")
-    logger.info(f'Loaded {len(corpus)} passages from corag/kilt-corpus-used-dataset')
+    # logger.info(f'Loaded {len(corpus)} passages from corag/kilt-corpus-used-dataset')
     return corpus
 
 
 def load_unused_corpus() -> Dataset:
     corpus = load_from_disk("/home/stv10121/saltlux/data/kilt-corpus-unused-dataset")
-    logger.info(f'Loaded {len(corpus)} passages from corag/kilt-corpus-unused-dataset')
+    # logger.info(f'Loaded {len(corpus)} passages from corag/kilt-corpus-unused-dataset')
     return corpus
 
 
 def load_corpus() -> Dataset:
     corpus: Dataset = load_dataset('corag/kilt-corpus', split='train')
-    logger.info(f'Loaded {len(corpus)} passages from corag/kilt-corpus')
+    # logger.info(f'Loaded {len(corpus)} passages from corag/kilt-corpus')
     return corpus
 
 
@@ -113,15 +113,15 @@ def save_params_to_json(params: Dict, file_path: str):
         json.dump(params, f, indent='\t', ensure_ascii=False)
 
 
-def log_random_samples(dataset: Dataset, num_samples: int = 3):
-    from utils import log_truncate
-    # Log a few random samples
-    num_samples = min(num_samples, len(dataset))
-    for index in random.sample(range(len(dataset)), num_samples):
-        logger.info(f"\nSample {index} of the dataset:")
-        for key, value in dataset[index].items():
-            logger.info(f"################ {key}")
-            logger.info(log_truncate(value))
+# def log_random_samples(dataset: Dataset, num_samples: int = 3):
+#     from utils import log_truncate
+#     # Log a few random samples
+#     num_samples = min(num_samples, len(dataset))
+#     for index in random.sample(range(len(dataset)), num_samples):
+#         logger.info(f"\nSample {index} of the dataset:")
+#         for key, value in dataset[index].items():
+#             logger.info(f"################ {key}")
+#             logger.info(log_truncate(value))
 
 
 def format_input_context(doc: Dict[str, str]) -> str:

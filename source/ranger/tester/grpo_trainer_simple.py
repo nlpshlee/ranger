@@ -1,9 +1,15 @@
+from _init import *
+
 from unsloth import FastLanguageModel
 from datasets import load_dataset
 
+'''
+    source/ranger/ 밑에 임시 폴더나, 캐시 폴더 다 지운 다음에 실행하면 또 되네...
+'''
 from ranger.grpo.grpo_config import GRPOConfig
 from ranger.grpo.grpo_trainer import GRPOTrainer
-# from trl.trainer.grpo_config import GRPOConfig
+
+# from trl import GRPOConfig # unsloth_compiled_cache 안에 새로 컴파일된 UnslothGRPOTrainer.py 의 UnslothGRPOConfig 를 import 하는 듯...
 # from trl.trainer.grpo_trainer import GRPOTrainer
 
 
@@ -35,7 +41,7 @@ dataset = load_dataset("openai/gsm8k", "main", split="train[:4]").map(lambda x: 
 
 # 5. GRPO 설정
 config = GRPOConfig(
-    per_device_train_batch_size = 1,
+    per_device_train_batch_size = 4, # -> 'num_generations'로 나누어떨어져야 함
     gradient_accumulation_steps = 1,
     num_generations = 4,
     max_prompt_length = 128,
