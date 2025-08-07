@@ -123,9 +123,10 @@ class ChainGenerator:
             self._corag_agent.reset()
         
         results = []
+        data_size = len(datas)
 
         for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
-            print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {(i+1)*batch_size-1})\n')
+            print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {min((i+1)*batch_size-1, data_size-1)})\n')
 
             self._chain_generate_time.check_time()
 
