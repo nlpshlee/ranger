@@ -1,7 +1,10 @@
 from unsloth import FastLanguageModel
 from datasets import load_dataset
-from trl import GRPOConfig
-from trl.trainer.grpo_trainer import GRPOTrainer
+
+from ranger.grpo.grpo_config import GRPOConfig
+from ranger.grpo.grpo_trainer import GRPOTrainer
+# from trl.trainer.grpo_config import GRPOConfig
+# from trl.trainer.grpo_trainer import GRPOTrainer
 
 
 # 모델 로딩 (vllm 비활성화로 안정성 확보)
