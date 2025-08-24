@@ -1,7 +1,8 @@
 from _init import *
 
-import torch, random, unsloth
-from trl import GRPOConfig
+import torch, random
+
+from ranger.grpo.grpo_config import GRPOConfig
 
 from ranger.modules import json_util
 from ranger.chain_generator import ChainGenerator
@@ -37,12 +38,12 @@ def load_datas(train_data_path: str, test_data_path: str, seed: int, do_print=Fa
 
 
 def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, test_datas: list):
-    # 1. ChainGenerator 생성
+    # 1. ChainGenerator 생성 (vllm engine)
     vllm_config = {
         "model_name": model_name,
         "task_desc": "answer multi-hop questions",
         'device': 'cuda:1',
-        'gpu_memory_utilization': 0.9,
+        'gpu_memory_utilization': 0.8,
         'dtype': 'float16',
         'max_model_len': 4096,
         'max_token_gen': 128,
@@ -69,15 +70,18 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         'lora_r': 8,
         'lora_target_modules': ["q_proj", "k_proj", "v_proj", "o_proj"],
         'lora_alpha': 8,
-        'use_gradient_checkpointing': 'unsloth'
+        'use_gradient_checkpointing': False
     }
 
     grpo_config = GRPOConfig(
         per_device_train_batch_size = 1,
         gradient_accumulation_steps = 1,
-        num_generations = 4, # n_chains
-        max_prompt_length = 4096, # max_model_len
-        max_completion_length = 128, # max_token_gen
+        num_generations = 4,                        # n_chains
+        max_prompt_length = 4096,                   # max_model_len
+        max_completion_length = 128,                # max_token_gen
+        learning_rate = 1e-6,                       # learning rate for `AdamW` optimizer
+        epsilon = 0.2,                              # CLIP epsilon
+        beta = 0.04,                                # KL coefficient
         max_steps = 1,
         logging_steps = 1,
         output_dir = out_dir,

@@ -85,7 +85,8 @@ class VllmEngine(VllmAgent):
         
         self._called_cnt += 1
         if do_print:
-            print(f'VllmEngine vllm called_cnt : {self._called_cnt}')
+            if self._called_cnt % 100 == 0:
+                print(f'# VllmEngine.generate_batch() vllm called_cnt : {self._called_cnt}')
         
         return results
 

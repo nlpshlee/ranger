@@ -86,7 +86,23 @@ class ChainResult:
         self._log_likes = []
         self._is_stop = False
         self._reward = -1                   # 0 ~ 1
-    
+        self._advantage = -1
+
+
+    def get_completion(self, delim='\n'):
+        completion_parts = []
+        chain_depth = len(self._sub_querys)
+
+        for i in range(chain_depth):
+            sub_query = self._sub_querys[i]
+            sub_answer = self._sub_answers[i]
+            final_answer = self._final_answers[i]
+
+            completion_part = f'<sub_query>{sub_query}</sub_query><sub_answer>{sub_answer}</sub_answer><final_answer>{final_answer}</final_answer>'
+            completion_parts.append(completion_part)
+        
+        return f'{delim}<chain>' + delim.join(completion_parts) + f'{delim}</chain>'
+
 
     def print_chain(self):
         chain_depth = len(self._sub_querys)
@@ -95,7 +111,8 @@ class ChainResult:
 
         for i in range(chain_depth):
             print(f'\t{self._log_likes[i]}\t{self._sub_querys[i]}\t{self._doc_ids_list[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
-        print(f'\n\treward : {self._reward}\n')
+        print(f'\n\treward : {self._reward}')
+        print(f'\tadvantage : {self._advantage}\n')
 
 
 

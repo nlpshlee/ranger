@@ -126,7 +126,9 @@ class ChainGenerator:
         data_size = len(datas)
 
         for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
-            print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({i*batch_size} ~ {min((i+1)*batch_size-1, data_size-1)})\n')
+            start = i*batch_size
+            end = min((i+1)*batch_size-1, data_size-1)
+            print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({start} ~ {end})\n')
 
             self._chain_generate_time.check_time()
 
