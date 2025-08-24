@@ -15,7 +15,6 @@ from datasets import Dataset
 from openai.types.chat import ChatCompletion
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from search.logger_config import logger
 from vllm_client import VllmClient, get_vllm_model_id
 from search.search_utils import search_by_http
 from data_utils import format_input_context, parse_answer_logprobs

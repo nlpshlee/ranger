@@ -8,7 +8,6 @@ from transformers import AutoTokenizer, AutoModel
 
 from ranger.corag.search.simple_encoder import SimpleEncoder
 from ranger.corag.data_utils import load_corpus, load_used_corpus
-from ranger.corag.search.logger_config import logger
 
 
 def _get_all_shards_path(index_dir: str) -> List[str]:
@@ -19,7 +18,7 @@ def _get_all_shards_path(index_dir: str) -> List[str]:
         return int(p.split('-shard-')[1].split('.')[0])
 
     path_list = sorted(path_list, key=lambda path: _parse_shard_idx(path))
-    logger.info('Embeddings path list: {}'.format(path_list))
+    print('Embeddings path list: {}'.format(path_list))
     return path_list
 
 
@@ -46,7 +45,7 @@ class E5Searcher:
         all_embeddings: torch.Tensor = torch.cat(
             [torch.load(p, weights_only=True, map_location=lambda storage, loc: storage) for p in shard_paths], dim=0
         )
-        logger.info(f'Load {all_embeddings.shape[0]} embeddings from {self.index_dir}')
+        print(f'Load {all_embeddings.shape[0]} embeddings from {self.index_dir}')
 
         split_embeddings = torch.chunk(all_embeddings, len(self.gpu_ids))
         self.embeddings: List[torch.Tensor] = [

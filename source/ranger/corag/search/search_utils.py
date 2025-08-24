@@ -1,7 +1,6 @@
 import requests
 import time
 from typing import List, Dict
-from .logger_config import logger
 
 
 def search_by_http(query: str, topk=5, host: str = 'localhost', port: int = 8000, timeout: int = 30) -> List[Dict]:
@@ -37,28 +36,18 @@ def search_by_http(query: str, topk=5, host: str = 'localhost', port: int = 8000
             """
             return result['retrieval']
         else:
-            logger.error(f"검색 실패: {query[:50]}... (상태코드: {response.status_code}, 응답: {response.text})")
+            print(f"# [error] 검색 실패: {query[:50]}... (상태코드: {response.status_code}, 응답: {response.text})")
             return []
     except requests.exceptions.Timeout:
         elapsed_time = time.time() - start_time
-        logger.error(f"검색 타임아웃: {query[:50]}... (경과시간: {elapsed_time:.2f}초, 타임아웃: {timeout}초)")
+        print(f"# [error] 검색 타임아웃: {query[:50]}... (경과시간: {elapsed_time:.2f}초, 타임아웃: {timeout}초)")
         return []
     except requests.exceptions.ConnectionError as e:
         elapsed_time = time.time() - start_time
-        logger.error(f"검색 연결 오류: {query[:50]}... (경과시간: {elapsed_time:.2f}초, 오류: {e})")
+        print(f"# [error] 검색 연결 오류: {query[:50]}... (경과시간: {elapsed_time:.2f}초, 오류: {e})")
         return []
     except Exception as e:
         elapsed_time = time.time() - start_time
-        logger.error(f"검색 중 예외 발생: {query[:50]}... (경과시간: {elapsed_time:.2f}초, 오류: {e})")
+        print(f"# [error] 검색 중 예외 발생: {query[:50]}... (경과시간: {elapsed_time:.2f}초, 오류: {e})")
         return []
 
-
-# def search_by_http(query: str, host: str = 'localhost', port: int = 8090) -> List[Dict]:
-#     url = f"http://{host}:{port}"
-#     response = requests.post(url, json={'query': query})
-
-#     if response.status_code == 200:
-#         return response.json()
-#     else:
-#         logger.error(f"Failed to get a response. Status code: {response.status_code}")
-#         return []

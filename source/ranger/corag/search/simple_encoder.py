@@ -9,7 +9,6 @@ from datasets import Dataset
 from transformers import AutoModel, AutoTokenizer
 from transformers.modeling_outputs import BaseModelOutput
 
-from ranger.corag.search.logger_config import logger
 from ranger.corag.utils import move_to_device, get_detailed_instruct, get_task_def_by_task_name, create_batch_dict, pool
 from ranger.corag.search.model_config import MODEL_NAME_TO_POOL_TYPE, MODEL_NAME_TO_PREFIX_TYPE
 
@@ -36,10 +35,10 @@ class SimpleEncoder(nn.Module):
         if self.prefix_type == 'instruction' and task_name is not None:
             task_def: str = get_task_def_by_task_name(task_name=task_name)
             self.prompt = get_detailed_instruct(task_def)
-            logger.info('Set prompt: {}'.format(self.prompt))
+            print('Set prompt: {}'.format(self.prompt))
 
         self.encoder.eval()
-        logger.info(f'pool_type={self.pool_type}, prefix_type={self.prefix_type}, prompt={self.prompt}')
+        print(f'pool_type={self.pool_type}, prefix_type={self.prefix_type}, prompt={self.prompt}')
 
     def encode_queries(self, queries: List[str], **kwargs) -> torch.Tensor:
         if self.prefix_type == 'query_or_passage':

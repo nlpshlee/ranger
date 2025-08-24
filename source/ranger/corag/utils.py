@@ -15,8 +15,6 @@ from nltk.metrics.distance import jaccard_distance
 from nltk.util import ngrams
 from typing import List, Union, Mapping, Dict, Any
 
-from ranger.corag.search.logger_config import logger
-
 
 def save_json_to_file(objects: Union[List, dict, Dataset], path: str, line_by_line: bool = False):
     if line_by_line:
@@ -129,7 +127,7 @@ def get_task_def_by_task_name(task_name: str) -> str:
     if task_name in task_name_to_instruct:
         return task_name_to_instruct[task_name]
 
-    logger.warning(f'Task name {task_name} not found in task_name_to_instruct, will use default instruct')
+    print(f'# [Warning] Task name {task_name} not found in task_name_to_instruct, will use default instruct')
     return 'Given a search query, retrieve relevant documents that can help answer the query'
 
 
