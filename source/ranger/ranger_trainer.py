@@ -5,6 +5,7 @@ from typing import List
 import torch
 from torch.nn.functional import log_softmax
 from torch.optim import AdamW
+# torch.autograd.set_detect_anomaly(True)
 
 from transformers import Trainer, AutoModelForCausalLM, AutoTokenizer
 from unsloth import FastLanguageModel
@@ -60,6 +61,13 @@ class RANGERTrainer(Trainer):
         self._train_datas: list
         self._test_datas: list
 
+        super().__init__(
+            model=self.model,
+            processing_class=self.processing_class,
+            optimizers=(self.optimizer, None),
+            args=self._grpo_config
+        )
+
 
     def _set_config(self, model_config: dict, grpo_config: GRPOConfig):
         print(f'\n# RANGERTrainer._set_config() model_config : {json_util.to_str(model_config)}\n')
@@ -75,7 +83,7 @@ class RANGERTrainer(Trainer):
         self._lora_alpha                            = model_config['lora_alpha']
         self._use_gradient_checkpointing            = model_config['use_gradient_checkpointing']
 
-        print(f'\n# RANGERTrainer._set_config() grpo_config : {json_util.to_str(grpo_config)}\n')
+        print(f'\n# RANGERTrainer._set_config() grpo_config : {grpo_config}\n')
         self._lr                                    = grpo_config.learning_rate
         self._epsilon                               = grpo_config.epsilon
         self._beta                                  = grpo_config.beta
@@ -116,7 +124,8 @@ class RANGERTrainer(Trainer):
             self._tokenizer = self.processing_class
 
             print(f'\tmodel : {type(self.model)}')
-            print(f'\ttokenizer : {type(self._tokenizer)}\n')
+            print(f'\ttokenizer : {type(self._tokenizer)}')
+            print(f'\toptimizer : {type(self.optimizer)}\n')
         else:
             print(f'# RANGERTrainer._init_model() Failed : {self._model_name}')
 
@@ -201,7 +210,7 @@ class RANGERTrainer(Trainer):
     '''
     def _get_per_token_logps(self, model: AutoModelForCausalLM, input_ids, attention_mask):
         # 1. 전체 시퀀스에 대한 logits 획득
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
         logits = outputs.logits
 
         # 2. 마지막 logit 제거 (다음 토큰이 없으므로)
@@ -327,7 +336,7 @@ class RANGERTrainer(Trainer):
         # print(f'attention_mask : {attention_mask.shape}')
 
         # r(i) 값 계산
-        log_ratio = policy_logps - ref_logps
+        log_ratio = policy_logps - policy_logps.detach()
         ratio = torch.exp(log_ratio)
 
         # unclipped loss : r(i) * advantage
@@ -444,11 +453,18 @@ class RANGERTrainer(Trainer):
 
             - _get_per_token_logps() 함수를 두번 호출하는건 문제가 되지 않음
                 - 어댑터 부분을 제외한 모델의 기존 파라미터는 두 번의 forward를 수행해도 내부적으로는 전혀 변경되지 않기 때문임
+
+            - 하아... 결국 accelerator 사용해서, 언랩핑된 모델 기준으로 해야 해결됨
+
+            - 찐 해결 : _get_per_token_logps() 함수에서 아래처럼 변경
+                - outputs = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+                - 'use_cache=False' 이 부분 추가하니까 해결은 됨
         '''
         # 레퍼런스 모델로부터 log 확률 계산 : self.model의 어댑터를 비활성화하여 계산
-        with torch.no_grad(), self.model.disable_adapter():
-            ref_logps = self._get_per_token_logps(self.model, input_ids, attention_mask)
-            ref_logps = ref_logps.detach()
+        with torch.inference_mode():
+            with self.accelerator.unwrap_model(self.model).disable_adapter():
+                ref_logps = self._get_per_token_logps(self.model, input_ids, attention_mask)
+                ref_logps = ref_logps.detach()
         
         # 현재 모델(Policy)로부터 log 확률 계산
         policy_logps = self._get_per_token_logps(self.model, input_ids, attention_mask)
@@ -465,7 +481,7 @@ class RANGERTrainer(Trainer):
                 1. 위에서 ref_logps를 계산할 때, torch.no_grad() 사용하고, detach() 해줌
                 2. optimizer를 설정할 때, AdamW(self.model.parameters(), ...)와 같이 self.model의 파라미터만 전달했음
         '''
-        print(f'\n# RANGERTrainer._train_batch() Batch Loss: {batch_loss:.4f}\n')
+        print(f'\n# RANGERTrainer._train_batch() Batch Loss: {batch_loss}\n')
         self.optimizer.zero_grad()
         batch_loss.backward()
         self.optimizer.step()

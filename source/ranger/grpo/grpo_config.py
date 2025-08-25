@@ -210,6 +210,10 @@ class GRPOConfig(TrainingArguments):
             "`transformers.TrainingArguments`."
         },
     )
+    epsilon: float = field(
+        default=0.2,
+        metadata={"help": "CLIP epsilon."},
+    )
     beta: float = field(
         default=0.04,
         metadata={"help": "KL coefficient."},
