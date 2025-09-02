@@ -108,8 +108,8 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
 
     print(f'\n# ranger_runner.run_base() start time : {common_util.get_datetime_now()}\n')
 
-    epochs, batch_size, n_chains, chain_depth = 100, 2, 3, 5
-    ranger_trainer.train(train_datas[:5], batch_size, n_chains, chain_depth)
+    epochs, batch_size, n_chains, chain_depth = 10, 1, 10, 5
+    ranger_trainer.train(train_datas[:20], epochs, batch_size, n_chains, chain_depth)
 
     print(f'\n# ranger_runner.run_base() end time : {common_util.get_datetime_now()}\n')
 

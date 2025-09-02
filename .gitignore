@@ -6,5 +6,5 @@ __pycache__
 elasticsearch-7.10.1
 data
 logs
-outputs
+output*
 unsloth_compiled_cache

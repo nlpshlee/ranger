@@ -138,6 +138,7 @@ class CoRagAgent:
         self._temperature = temperature
         self._top_k_query = top_k_query
         self._top_k_sub_query = top_k_sub_query
+        self._adapter_path: str
 
         self._batch_idx = 0
     
@@ -179,7 +180,8 @@ class CoRagAgent:
             messages=inputs,
             max_token_gen=self._max_token_gen,
             temperature=self._temperature,
-            return_toks_log_probs=False
+            return_toks_log_probs=False,
+            adapter_path=self._adapter_path
         )
 
         idx = 0
@@ -222,7 +224,8 @@ class CoRagAgent:
             messages=inputs,
             max_token_gen=self._max_token_gen,
             temperature=self._temperature,
-            return_toks_log_probs=False
+            return_toks_log_probs=False,
+            adapter_path=self._adapter_path
         )
         
         idx = 0
@@ -271,7 +274,8 @@ class CoRagAgent:
             messages=inputs,
             max_token_gen=self._max_token_gen,
             temperature=0.0,
-            return_toks_log_probs=True
+            return_toks_log_probs=True,
+            adapter_path=self._adapter_path
         )
 
         idx = 0
@@ -312,9 +316,10 @@ class CoRagAgent:
         return all_stopped
 
 
-    def generate_batch(self, task_desc: str, datas: list, n_chains: int, chain_depth: int) -> List[QueryResult]:
+    def generate_batch(self, task_desc: str, datas: list, n_chains: int, chain_depth: int, adapter_path: str) -> List[QueryResult]:
         self._batch_idx += 1
         self._task_desc = task_desc
+        self._adapter_path = adapter_path
 
         # 각 쿼리에 대한 결과 객체 초기화
         query_results = []

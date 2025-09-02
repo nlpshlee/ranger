@@ -117,7 +117,7 @@ class ChainGenerator:
             )
 
 
-    def chain_generate(self, datas, batch_size, n_chains, chain_depth, do_print=False, do_reset=False):
+    def chain_generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', do_print=False, do_reset=False):
         print(f'# ChainGenerator.chain_generate() [start] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         if do_reset:
             self._corag_agent.reset()
@@ -136,7 +136,8 @@ class ChainGenerator:
                 task_desc=self._vllm_config['task_desc'],
                 datas=datas_batch,
                 n_chains=n_chains,
-                chain_depth=chain_depth
+                chain_depth=chain_depth,
+                adapter_path=adapter_path
             )
 
             self._chain_generate_time.check_time(

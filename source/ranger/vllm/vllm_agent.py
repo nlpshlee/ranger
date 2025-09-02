@@ -46,6 +46,7 @@ class VllmAgent(ABC):
                        messages: List[List[Dict]],
                        max_token_gen: int,
                        temperature: int,
-                       return_toks_log_probs=False) -> List[Union[str, Tuple[str, Any]]]:
+                       return_toks_log_probs=False,
+                       adapter_path='') -> List[Union[str, Tuple[str, Any]]]:
         pass
 

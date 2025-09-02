@@ -66,6 +66,9 @@ class RANGERTrainer(Trainer):
             optimizers=(self.optimizer, None)
         )
 
+        # Output 경로 설정
+        self._adapter_path = f'{self._out_dir}/lora_adapter_{common_util.get_datetime_now("%Y-%m-%d-%H-%M-%S")}'
+
 
     def _set_config(self, model_config: dict, grpo_config: dict):
         print(f'\n# RANGERTrainer._set_config() model_config : {json_util.to_str(model_config)}\n')
@@ -126,6 +129,16 @@ class RANGERTrainer(Trainer):
             print(f'\toptimizer : {type(self.optimizer)}\n')
         else:
             print(f'# RANGERTrainer._init_model() Failed : {self._model_name}')
+
+
+    def _save_adapter_for_vllm(self, step_name: str, step: int):
+        print(f'\n# RANGERTrainer._save_adapter_for_vllm() {step_name} : {step}')
+
+        if self.accelerator.is_main_process:
+            self.model.save_pretrained(self._adapter_path)
+        self.accelerator.wait_for_everyone()
+
+        common_util.check_gpu_memory(self._use_gpu_ids, '[adapter saved]')
 
 
     def _calculate_advantages(self, query_result: QueryResult, epsilon=1e-8):
@@ -233,6 +246,7 @@ class RANGERTrainer(Trainer):
         return log_probs.to(self._device)
 
 
+    # _calculate_loss_per_batch() 를 테스트하기 위한 함수
     def __calculate_loss_per_batch_test(self):
         import torch.nn.functional as F
         batch_size = 2
@@ -487,40 +501,48 @@ class RANGERTrainer(Trainer):
         return batch_loss.item()
 
 
-    def train(self, train_datas, batch_size, n_chains, chain_depth):
+    def train(self, train_datas, epochs, batch_size, n_chains, chain_depth):
         print(f'\n# RANGERTrainer.train() train_data_size : {len(train_datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         self._train_datas = train_datas
         data_size = len(train_datas)
 
-        all_batch_loss = []
+        for epoch in range(epochs):
+            all_batch_loss = []
 
-        for i, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
-            start = i*batch_size
-            end = min(data_size-1, (i+1)*batch_size-1)
-            print(f'# RANGERTrainer.train() batch {i+1} : datas size : {len(datas_batch)}({start} ~ {end})\n')
+            for i, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
+                start = i*batch_size
+                end = min(data_size-1, (i+1)*batch_size-1)
+                print(f'# RANGERTrainer.train() batch {i+1} : datas size : {len(datas_batch)}({start} ~ {end})\n')
 
-            # 1. 체인 생성 : 학습 배치와 체인 배치를 동일하게 맞춰야 하므로, chain_generate() 호출하고, [0]만 가져오면 됨 (size == 1)
-            query_results: List[QueryResult] = self._chain_generator.chain_generate(datas_batch, batch_size, n_chains, chain_depth)[0]
+                # 1. 체인 생성 : 학습 배치와 체인 배치를 동일하게 맞춰야 하므로, chain_generate() 호출하고, [0]만 가져오면 됨 (size == 1)
+                query_results: List[QueryResult] = self._chain_generator.chain_generate(datas_batch,
+                                                                                        batch_size,
+                                                                                        n_chains,
+                                                                                        chain_depth,
+                                                                                        self._adapter_path)[0]
 
-            # 2. 체인 별 리워드 계산
-            self._reward_calculator.calculate_reward(query_results)
+                # 2. 체인 별 리워드 계산
+                self._reward_calculator.calculate_reward(query_results)
 
-            for query_result in query_results:
-                print(f'query_id : {query_result._query_id}, query : {query_result._query}, answer : {query_result._answer}\n')
+                for query_result in query_results:
+                    print(f'query_id : {query_result._query_id}, query : {query_result._query}, answer : {query_result._answer}\n')
+                    
+                    # 3. GRPO Advantage 계산 : 쿼리 별로 모든 체인에 대하여, Advantage 계산
+                    self._calculate_advantages(query_result)
+
+                    chain_results: List[ChainResult] = query_result._chain_results
+                    for chain_idx, chain_result in enumerate(chain_results):
+                        print(f'chain_idx : {chain_idx}')
+                        chain_result.print_chain()
                 
-                # 3. GRPO Advantage 계산 : 쿼리 별로 모든 체인에 대하여, Advantage 계산
-                self._calculate_advantages(query_result)
+                # 4. GRPO loss 계산 및 모델 학습
+                batch_loss = self._train_batch(query_results)
+                all_batch_loss.append(batch_loss)
 
-                chain_results: List[ChainResult] = query_result._chain_results
-                for chain_idx, chain_result in enumerate(chain_results):
-                    print(f'chain_idx : {chain_idx}')
-                    chain_result.print_chain()
+                print(f'\n# RANGERTrainer.train() all_batch_loss : {all_batch_loss}')
+                print(f'# RANGERTrainer.train() sum_batch_loss : {sum(all_batch_loss)}')
+                print(f'# RANGERTrainer.train() avg_batch_loss : {sum(all_batch_loss) / len(all_batch_loss)}\n')
             
-            # 4. GRPO loss 계산 및 모델 학습
-            batch_loss = self._train_batch(query_results)
-            all_batch_loss.append(batch_loss)
-
-            print(f'\n# RANGERTrainer.train() all_batch_loss : {all_batch_loss}')
-            print(f'# RANGERTrainer.train() sum_batch_loss : {sum(all_batch_loss)}')
-            print(f'# RANGERTrainer.train() avg_batch_loss : {sum(all_batch_loss) / len(all_batch_loss)}\n')
+            # 5. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
+            self._save_adapter_for_vllm('epoch', epoch)
 
