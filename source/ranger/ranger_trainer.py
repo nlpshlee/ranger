@@ -9,9 +9,6 @@ from torch.optim import AdamW
 
 from transformers import Trainer, AutoModelForCausalLM, AutoTokenizer
 from unsloth import FastLanguageModel
-from trl.models import create_reference_model
-
-from ranger.grpo.grpo_config import GRPOConfig
 
 from ranger.modules import common_util, json_util, container_util
 from ranger.chain_generator import ChainGenerator
@@ -24,13 +21,15 @@ class RANGERTrainer(Trainer):
                  chain_generator: ChainGenerator,
                  reward_calculator: RewardCalculator,
                  model_config: dict,
-                 grpo_config: GRPOConfig,
+                 grpo_config: dict,
+                 out_dir: str,
                  use_gpu_ids=[0]):
         
         self._chain_generator = chain_generator
         self._reward_calculator = reward_calculator
         self._model_config = model_config
         self._grpo_config = grpo_config
+        self._out_dir = out_dir
         self._use_gpu_ids = use_gpu_ids
 
         self._model_name                            : str
@@ -64,12 +63,11 @@ class RANGERTrainer(Trainer):
         super().__init__(
             model=self.model,
             processing_class=self.processing_class,
-            optimizers=(self.optimizer, None),
-            args=self._grpo_config
+            optimizers=(self.optimizer, None)
         )
 
 
-    def _set_config(self, model_config: dict, grpo_config: GRPOConfig):
+    def _set_config(self, model_config: dict, grpo_config: dict):
         print(f'\n# RANGERTrainer._set_config() model_config : {json_util.to_str(model_config)}\n')
         self._model_name                            = model_config['model_name']
         self._device                                = model_config['device']
@@ -83,10 +81,10 @@ class RANGERTrainer(Trainer):
         self._lora_alpha                            = model_config['lora_alpha']
         self._use_gradient_checkpointing            = model_config['use_gradient_checkpointing']
 
-        print(f'\n# RANGERTrainer._set_config() grpo_config : {grpo_config}\n')
-        self._lr                                    = grpo_config.learning_rate
-        self._epsilon                               = grpo_config.epsilon
-        self._beta                                  = grpo_config.beta
+        print(f'\n# RANGERTrainer._set_config() grpo_config : {json_util.to_str(grpo_config)}\n')
+        self._lr                                    = grpo_config['learning_rate']
+        self._epsilon                               = grpo_config['epsilon']
+        self._beta                                  = grpo_config['beta']
 
 
     def _init_model(self):
@@ -486,11 +484,15 @@ class RANGERTrainer(Trainer):
         batch_loss.backward()
         self.optimizer.step()
 
+        return batch_loss.item()
+
 
     def train(self, train_datas, batch_size, n_chains, chain_depth):
         print(f'\n# RANGERTrainer.train() train_data_size : {len(train_datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         self._train_datas = train_datas
         data_size = len(train_datas)
+
+        all_batch_loss = []
 
         for i, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
             start = i*batch_size
@@ -515,5 +517,10 @@ class RANGERTrainer(Trainer):
                     chain_result.print_chain()
             
             # 4. GRPO loss 계산 및 모델 학습
-            self._train_batch(query_results)
+            batch_loss = self._train_batch(query_results)
+            all_batch_loss.append(batch_loss)
+
+            print(f'\n# RANGERTrainer.train() all_batch_loss : {all_batch_loss}')
+            print(f'# RANGERTrainer.train() sum_batch_loss : {sum(all_batch_loss)}')
+            print(f'# RANGERTrainer.train() avg_batch_loss : {sum(all_batch_loss) / len(all_batch_loss)}\n')
 
