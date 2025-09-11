@@ -1,6 +1,7 @@
 from _init import *
 
 from typing import List
+import numpy as np
 
 import torch
 from torch.nn.functional import log_softmax
@@ -14,6 +15,9 @@ from ranger.modules import common_util, json_util, container_util
 from ranger.chain_generator import ChainGenerator
 from ranger.reward_calculator import RewardCalculator
 from ranger.corag_agent import QueryResult, ChainResult
+
+
+NULL_FLOAT = np.finfo(np.float32).min
 
 
 class RANGERTrainer(Trainer):
@@ -67,7 +71,8 @@ class RANGERTrainer(Trainer):
         )
 
         # Output 경로 설정
-        self._adapter_path = f'{self._out_dir}/lora_adapter_{common_util.get_datetime_now("%Y-%m-%d-%H-%M-%S")}'
+        self._run_time = common_util.get_datetime_now("%Y-%m-%d-%H-%M-%S")
+        self._adapter_path = f'{self._out_dir}/lora_adapter_{self._run_time}'
 
 
     def _set_config(self, model_config: dict, grpo_config: dict):
@@ -427,7 +432,7 @@ class RANGERTrainer(Trainer):
 
             chain_results: List[ChainResult] = query_result._chain_results
             for chain_result in chain_results:
-                completion = chain_result.get_completion()
+                completion = chain_result.make_get_completion()
 
                 all_full_texts.append(query + completion)
                 all_query_lens.append(query_len)
@@ -506,7 +511,12 @@ class RANGERTrainer(Trainer):
         self._train_datas = train_datas
         data_size = len(train_datas)
 
+        epoch_results = []
+        epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, '[base]')
+        epoch_results.append(epoch_result)
+
         for epoch in range(epochs):
+            print(f'{"#"*25} RANGERTrainer.train() starting epoch : {epoch} {"#"*25}')
             all_batch_loss = []
 
             for i, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
@@ -524,17 +534,18 @@ class RANGERTrainer(Trainer):
                 # 2. 체인 별 리워드 계산
                 self._reward_calculator.calculate_reward(query_results)
 
+                # 3. GRPO Advantage 계산 : 쿼리 별로 모든 체인에 대하여, Advantage 계산
                 for query_result in query_results:
-                    print(f'query_id : {query_result._query_id}, query : {query_result._query}, answer : {query_result._answer}\n')
-                    
-                    # 3. GRPO Advantage 계산 : 쿼리 별로 모든 체인에 대하여, Advantage 계산
                     self._calculate_advantages(query_result)
 
-                    chain_results: List[ChainResult] = query_result._chain_results
-                    for chain_idx, chain_result in enumerate(chain_results):
-                        print(f'chain_idx : {chain_idx}')
-                        chain_result.print_chain()
-                
+                    # print(f'query_id : {query_result._query_id}, query : {query_result._query}, answer : {query_result._answer}\n')
+                    # chain_results: List[ChainResult] = query_result._chain_results
+                    # for chain_idx, chain_result in enumerate(chain_results):
+                    #     print(f'chain_idx : {chain_idx}')
+                    #     chain_result.print_chain()
+
+
+
                 # 4. GRPO loss 계산 및 모델 학습
                 batch_loss = self._train_batch(query_results)
                 all_batch_loss.append(batch_loss)
@@ -545,4 +556,150 @@ class RANGERTrainer(Trainer):
             
             # 5. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
             self._save_adapter_for_vllm('epoch', epoch)
+
+            epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, f'[epoch {epoch}]')
+            epoch_results.append(epoch_result)
+        
+        self.write_results(epoch_results)
+
+
+    def evaluate(self, datas, batch_size, n_chains, chain_depth, prefix):
+        print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} start : {common_util.get_datetime_now()} {"#"*25}')
+        all_query_results = []
+
+        with torch.no_grad():
+            for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
+                print(f'# RANGERTrainer.evaluate() {prefix} batch {i+1}')
+
+                # 1. 체인 생성
+                query_results: List[QueryResult] = self._chain_generator.chain_generate(datas_batch,
+                                                                                        batch_size,
+                                                                                        n_chains,
+                                                                                        chain_depth,
+                                                                                        self._adapter_path)[0]
+                
+                # 2. 체인 별 리워드 계산
+                self._reward_calculator.calculate_reward(query_results)
+
+                 # 3. GRPO Advantage 계산
+                for query_result in query_results:
+                    self._calculate_advantages(query_result)
+
+                    # 4. 연결된 하나의 체인 생성
+                    chain_results: List[ChainResult] = query_result._chain_results
+                    for chain_result in chain_results:
+                        chain_result.make_get_completion()
+                
+                all_query_results.extend(query_results)
+        
+        print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} end : {common_util.get_datetime_now()} {"#"*25}')
+        return all_query_results
+
+
+    def write_results(self, epoch_results:List[List[QueryResult]]):
+        epoch_len = len(epoch_results)
+        query_len = len(epoch_results[0])
+
+        all_write_dict = []
+
+        for query_idx in range(query_len):
+            query_id = ''
+            query = ''
+            answer = ''
+            all_chain_results = []
+
+            is_same = True
+            for epoch_idx in range(epoch_len):
+                query_result: QueryResult = epoch_results[epoch_idx][query_idx]
+
+                if len(query_id) != 0 and query_id != query_result._query_id:
+                    is_same = False
+                    break
+                else:
+                    query_id = query_result._query_id
+                    query = query_result._query
+                    answer = query_result._answer
+                    all_chain_results.append(query_result._chain_results)
+            
+            if is_same:
+                write_dict = {}
+                write_dict['query_id'] = query_id
+                write_dict['query'] = query
+                write_dict['answer'] = answer
+
+                epoch_outputs = {}
+                prev_avg_reward, prev_avg_advantage = NULL_FLOAT, NULL_FLOAT
+
+                for i, chain_results in enumerate(all_chain_results):
+                    epoch_output = {}
+
+                    n_chains = len(chain_results)
+                    all_reward, all_advantage = [], []
+
+                    for j in range(n_chains):
+                        chain_result: ChainResult = chain_results[j]
+                        chain_output = {}
+
+                        chain_output['reward'] = chain_result._reward
+                        chain_output['advantage'] = chain_result._advantage
+                        all_reward.append(chain_result._reward)
+                        all_advantage.append(chain_result._advantage)
+
+                        chain_depth = len(chain_result._sub_querys)
+                        for k in range(chain_depth):
+                            sub_query = chain_result._sub_querys[k]
+                            sub_answer = chain_result._sub_answers[k]
+                            final_answer = chain_result._final_answers[k]
+
+                            chain_output[f'depth_{k+1}'] = {
+                                'sub_query': sub_query,
+                                'sub_answer': sub_answer,
+                                'final_answer': final_answer
+                            }
+                        
+                        epoch_output[f'chain_{j+1}'] = chain_output
+                    
+                    epoch_output['reward_all'] = all_reward
+                    avg_reward, diff_reward_sign, diff_reward_value = _get_avg_and_diff_from_prev(all_reward, n_chains, prev_avg_reward)
+                    epoch_output['reward_avg'] = avg_reward
+                    epoch_output['reward_diff'] = [diff_reward_sign, diff_reward_value]
+
+                    epoch_output['advantage_all'] = all_advantage
+                    avg_advantage, diff_advantage_sign, diff_advantage_value = _get_avg_and_diff_from_prev(all_advantage, n_chains, prev_avg_advantage)
+                    epoch_output['advantage_avg'] = avg_advantage
+                    epoch_output['advantage_diff'] = [diff_advantage_sign, diff_advantage_value]
+
+                    prev_avg_reward = avg_reward
+                    prev_avg_advantage = avg_advantage
+                    
+                    if i == 0:
+                        epoch_outputs['base'] = epoch_output
+                    else:
+                        epoch_outputs[f'epoch_{i+1}'] = epoch_output
+
+                write_dict['epoch_outputs'] = epoch_outputs
+                all_write_dict.append(write_dict)
+        
+        out_file_path = f'{self._out_dir}/output_dict_{self._run_time}.json'
+        json_util.write_file(all_write_dict, out_file_path)
+
+
+'''
+    전체 값으로 평균을 계산하고, 이전 평균하고의 차이까지 계산
+'''
+def _get_avg_and_diff_from_prev(all_value: list, n_chains: int, prev_avg: float):
+    avg_value = sum(all_value) / n_chains
+
+    if prev_avg == NULL_FLOAT or prev_avg == avg_value:
+        diff_value = 0
+        diff_sign = '변화 없음'
+    else:
+        diff_value = avg_value - prev_avg
+
+        if prev_avg < avg_value:
+            diff_sign = '증가'
+        elif prev_avg > avg_value:
+            diff_sign = '감소'
+    
+    return avg_value, diff_sign, diff_value
 

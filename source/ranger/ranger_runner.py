@@ -68,7 +68,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         'max_token_gen': max_token_gen,
         'top_k_query': 20,                          # main query 검색 문서 수
         'top_k_sub_query': 5,                       # sub query  검색 문서 수
-        'temperature': 0
+        'temperature': 0.7                          # 체인이 다양하게 생성되어야 하기 때문에, 높은 값 할당
     }
 
     chain_generator = ChainGenerator(vllm_config, USE_GPU_IDS)
@@ -108,8 +108,12 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
 
     print(f'\n# ranger_runner.run_base() start time : {common_util.get_datetime_now()}\n')
 
-    epochs, batch_size, n_chains, chain_depth = 10, 1, 10, 5
-    ranger_trainer.train(train_datas[:20], epochs, batch_size, n_chains, chain_depth)
+    '''
+        - batch_size 는 '1'로 고정하고, 'Accelerate'를 이용하여 'Gradient Accumulation' 적용
+            - batch_size 를 키우면, OOM 발생
+    '''
+    epochs, batch_size, n_chains, chain_depth = 3, 1, 2, 3
+    ranger_trainer.train(train_datas[:10], epochs, batch_size, n_chains, chain_depth)
 
     print(f'\n# ranger_runner.run_base() end time : {common_util.get_datetime_now()}\n')
 

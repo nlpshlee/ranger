@@ -87,9 +87,10 @@ class ChainResult:
         self._is_stop = False
         self._reward = -1                   # 0 ~ 1
         self._advantage = -1
+        self._completion = ''
 
 
-    def get_completion(self, delim='\n'):
+    def make_get_completion(self, delim='\n'):
         completion_parts = []
         chain_depth = len(self._sub_querys)
 
@@ -101,7 +102,8 @@ class ChainResult:
             completion_part = f'<sub_query>{sub_query}</sub_query><sub_answer>{sub_answer}</sub_answer><final_answer>{final_answer}</final_answer>'
             completion_parts.append(completion_part)
         
-        return f'{delim}<chain>' + delim.join(completion_parts) + f'{delim}</chain>'
+        self._completion = f'{delim}<chain>' + delim.join(completion_parts) + f'{delim}</chain>'
+        return self._completion
 
 
     def print_chain(self):
