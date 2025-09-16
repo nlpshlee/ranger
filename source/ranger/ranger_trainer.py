@@ -9,6 +9,7 @@ from torch.optim import AdamW
 # torch.autograd.set_detect_anomaly(True)
 
 from transformers import Trainer, AutoModelForCausalLM, AutoTokenizer
+from accelerate import Accelerator
 from unsloth import FastLanguageModel
 
 from ranger.modules import common_util, json_util, container_util
@@ -47,6 +48,7 @@ class RANGERTrainer(Trainer):
         self._lora_target_modules                   : List[str]
         self._lora_alpha                            : int
         self._use_gradient_checkpointing            : bool
+        self._gradient_accumulation_steps           : int
         self._lr                                    : float
         self._epsilon                               : float
         self._beta                                  : float
@@ -58,6 +60,7 @@ class RANGERTrainer(Trainer):
         self.model                                  : AutoModelForCausalLM
         self.processing_class                       : AutoTokenizer
         self.optimizer                              : torch.optim.Optimizer
+        self.accelerator                            : Accelerator # Gradient Accumulation
         self._tokenizer                             : AutoTokenizer # 편의를 위한 래퍼 변수 (processing_class)
         self._init_model()
 
@@ -90,6 +93,7 @@ class RANGERTrainer(Trainer):
         self._use_gradient_checkpointing            = model_config['use_gradient_checkpointing']
 
         print(f'\n# RANGERTrainer._set_config() grpo_config : {json_util.to_str(grpo_config)}\n')
+        self._gradient_accumulation_steps           = grpo_config['gradient_accumulation_steps']
         self._lr                                    = grpo_config['learning_rate']
         self._epsilon                               = grpo_config['epsilon']
         self._beta                                  = grpo_config['beta']
@@ -126,12 +130,20 @@ class RANGERTrainer(Trainer):
 
             self.optimizer = AdamW(self.model.parameters(), lr=self._lr)
 
+            # 배치를 '1'로 했을 때, 발생하는 학습 붕괴를 막기 위해, 그래디언트를 누적하여 반영하는 라이브러리
+            os.environ['ACCELERATE_TORCH_DEVICE'] = self._device
+            self.accelerator = Accelerator(gradient_accumulation_steps=self._gradient_accumulation_steps)
+            self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
+            common_util.check_gpu_memory(self._use_gpu_ids, f'[Accelerator Init] with device:{self.accelerator.device}')
+
             # ranger 멤버 변수에 trainer 상속 변수 할당
             self._tokenizer = self.processing_class
 
             print(f'\tmodel : {type(self.model)}')
             print(f'\ttokenizer : {type(self._tokenizer)}')
-            print(f'\toptimizer : {type(self.optimizer)}\n')
+            print(f'\toptimizer : {type(self.optimizer)}')
+            print(f'\taccelerator : {type(self.accelerator)}')
+            print(f'\tconfig_device : {self._device}, accelerator_device : {self.accelerator.device}\n')
         else:
             print(f'# RANGERTrainer._init_model() Failed : {self._model_name}')
 
@@ -140,9 +152,10 @@ class RANGERTrainer(Trainer):
         print(f'\n# RANGERTrainer._save_adapter_for_vllm() {step_name} : {step}')
 
         if self.accelerator.is_main_process:
-            self.model.save_pretrained(self._adapter_path)
-        self.accelerator.wait_for_everyone()
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_model.save_pretrained(self._adapter_path)
 
+        self.accelerator.wait_for_everyone()
         common_util.check_gpu_memory(self._use_gpu_ids, '[adapter saved]')
 
 
@@ -497,32 +510,43 @@ class RANGERTrainer(Trainer):
             - ref_model은 아래 설정으로 인하여 학습되지 않음
                 1. 위에서 ref_logps를 계산할 때, torch.no_grad() 사용하고, detach() 해줌
                 2. optimizer를 설정할 때, AdamW(self.model.parameters(), ...)와 같이 self.model의 파라미터만 전달했음
+            
+            # accelerator 사용
+                - 기존 zero_grad(), step() 은 train() 함수에서 관리됨
         '''
         print(f'\n# RANGERTrainer._train_batch() Batch Loss: {batch_loss}\n')
-        self.optimizer.zero_grad()
-        batch_loss.backward()
-        self.optimizer.step()
+        # self.optimizer.zero_grad()
+        # batch_loss.backward()
+        # self.optimizer.step()
+        self.accelerator.backward(batch_loss)
 
         return batch_loss.item()
 
 
     def train(self, train_datas, epochs, batch_size, n_chains, chain_depth):
-        print(f'\n# RANGERTrainer.train() train_data_size : {len(train_datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+        print(f'\n# RANGERTrainer.train() [train_data_size : {len(train_datas)}], [epochs : {epochs}, batch_size : {batch_size}], [n_chains : {n_chains}, chain_depth : {chain_depth}]')
+        print(f'\tstart datetime : {common_util.get_datetime_now()}\n')
+        train_start = common_util.get_time_ms()
+
         self._train_datas = train_datas
         data_size = len(train_datas)
 
         epoch_results = []
-        epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, '[base]')
-        epoch_results.append(epoch_result)
+        # epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, '[base]')
+        # epoch_results.append(epoch_result)
 
-        for epoch in range(epochs):
-            print(f'{"#"*25} RANGERTrainer.train() starting epoch : {epoch} {"#"*25}')
+        for epoch in range(1, epochs+1):
+            print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] start : {common_util.get_datetime_now()} {"#"*25}\n')
+            epoch_start = common_util.get_time_ms()
+
             all_batch_loss = []
+            batch_len = (data_size + batch_size - 1) // batch_size
 
-            for i, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
-                start = i*batch_size
-                end = min(data_size-1, (i+1)*batch_size-1)
-                print(f'# RANGERTrainer.train() batch {i+1} : datas size : {len(datas_batch)}({start} ~ {end})\n')
+            for batch_idx, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
+                start = batch_idx * batch_size
+                end = min(data_size-1, (batch_idx+1) * batch_size-1)
+                print(f'# RANGERTrainer.train() [ {batch_idx+1} batch ] start, datas size : {len(datas_batch)}({start} ~ {end})\n')
+                batch_start = common_util.get_time_ms()
 
                 # 1. 체인 생성 : 학습 배치와 체인 배치를 동일하게 맞춰야 하므로, chain_generate() 호출하고, [0]만 가져오면 됨 (size == 1)
                 query_results: List[QueryResult] = self._chain_generator.chain_generate(datas_batch,
@@ -550,26 +574,56 @@ class RANGERTrainer(Trainer):
                 batch_loss = self._train_batch(query_results)
                 all_batch_loss.append(batch_loss)
 
-                print(f'\n# RANGERTrainer.train() all_batch_loss : {all_batch_loss}')
+                # 5. Accelerator 를 이용한 gradient accumulation
+                '''
+                    - 싱글 GPU를 사용할 경우, self.accelerator.sync_gradients 는 무조건 True
+                        - 애초에 멀티 GPU 환경에서 사용되는 라이브러리
+                        - RANGER 처럼 배치를 1로 하는 경우, 직접 카운팅해서 제어해야 함
+                '''
+                is_update_step = (batch_idx+1) % self._gradient_accumulation_steps == 0
+                is_last_step = (batch_idx+1) == batch_len
+
+                if is_update_step or is_last_step:
+                    self.optimizer.step()
+                    self.optimizer.zero_grad() # 누적된 gradient 를 한 번에 반영해야 하므로, 먼저 step() 호출하고 다음에 zero_grad() 호출
+                    print(f'\n# RANGERTrainer.train() [ {epoch} epoch - {batch_idx+1} batch ] : sync gradients (accelerator)')
+
+                print(f'\n# RANGERTrainer.train() all_batch_loss[-10:] : {all_batch_loss[-10:]}')
                 print(f'# RANGERTrainer.train() sum_batch_loss : {sum(all_batch_loss)}')
                 print(f'# RANGERTrainer.train() avg_batch_loss : {sum(all_batch_loss) / len(all_batch_loss)}\n')
-            
-            # 5. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
+
+                _, batch_elapsed_str = common_util.get_elapsed_time_ms(batch_start)
+                print(f'# RANGERTrainer.train() [ {batch_idx+1} batch ] end, elapsed_time : {batch_elapsed_str}\n')
+
+
+
+            # 6. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
             self._save_adapter_for_vllm('epoch', epoch)
 
-            epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, f'[epoch {epoch}]')
+            _, epoch_elapsed_str = common_util.get_elapsed_time_ms(epoch_start)
+            print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] end : {common_util.get_datetime_now()}, elapsed : {epoch_elapsed_str} {"#"*25}\n')
+
+            epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, f'[ {epoch} epoch ]')
             epoch_results.append(epoch_result)
         
         self.write_results(epoch_results)
+        
+        _, train_elapsed_str = common_util.get_elapsed_time_ms(train_start)
+        print(f'# RANGERTrainer.train() end datetime : {common_util.get_datetime_now()}, elapsed : {train_elapsed_str}\n')
+
+
+
 
 
     def evaluate(self, datas, batch_size, n_chains, chain_depth, prefix):
-        print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} start : {common_util.get_datetime_now()} {"#"*25}')
+        print(f'\n{"#"*25} RANGERTrainer.evaluate() {prefix} start : {common_util.get_datetime_now()} {"#"*25}')
+        evaluate_start = common_util.get_time_ms()
+
         all_query_results = []
 
         with torch.no_grad():
             for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
-                print(f'# RANGERTrainer.evaluate() {prefix} batch {i+1}')
+                print(f'# RANGERTrainer.evaluate() {prefix} - [ {i+1} batch ] start : {common_util.get_datetime_now()}')
 
                 # 1. 체인 생성
                 query_results: List[QueryResult] = self._chain_generator.chain_generate(datas_batch,
@@ -585,14 +639,16 @@ class RANGERTrainer(Trainer):
                 for query_result in query_results:
                     self._calculate_advantages(query_result)
 
-                    # 4. 연결된 하나의 체인 생성
+                    # 4. 전체 서브 스텝이 연결된 하나의 체인 생성
                     chain_results: List[ChainResult] = query_result._chain_results
                     for chain_result in chain_results:
                         chain_result.make_get_completion()
                 
                 all_query_results.extend(query_results)
         
-        print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} end : {common_util.get_datetime_now()} {"#"*25}')
+        _, evaluate_elapsed_str = common_util.get_elapsed_time_ms(evaluate_start)
+        print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} end : {common_util.get_datetime_now()}, elapsed : {evaluate_elapsed_str} {"#"*25}\n')
+
         return all_query_results
 
 

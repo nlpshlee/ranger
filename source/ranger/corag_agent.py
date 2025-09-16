@@ -6,7 +6,7 @@ from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from ranger.modules.common_const import *
-from ranger.modules import string_util
+from ranger.modules import string_util, common_util
 
 from ranger.corag.search.search_utils import search_by_http
 from ranger.corag.data_utils import format_documents_for_final_answer, format_input_context
@@ -337,8 +337,9 @@ class CoRagAgent:
         
         # 각 depth마다 서브쿼리 생성 및 처리
         for depth in range(chain_depth):
-            print(f"{'='*50}\n[{self._batch_idx} Batch] {depth+1} Depth Start\n{'='*50}\n")
-            start_time_depth = time.time()
+            # print(f"{'='*50}\n[{self._batch_idx} Batch] {depth+1} Depth Start\n{'='*50}\n")
+            # print(f'# CoRagAgent.generate_batch() [{self._batch_idx} Batch] {depth+1} Depth Start')
+            depth_start = common_util.get_time_ms()
 
             # 서브 쿼리 생성
             self.generate_sub_querys(query_results)
@@ -352,7 +353,8 @@ class CoRagAgent:
             # 서브 스텝 마다, 최종 답변 확인
             self.check_step_final_answers(query_results)
 
-            print(f"\n[{self._batch_idx} Batch] {depth+1} Depth End, Elapsed Time (s) : {(time.time()-start_time_depth):.2f}\n")
+            _, depth_elapsed_str = common_util.get_elapsed_time_ms(depth_start)
+            print(f"# CoRagAgent.generate_batch() [{self._batch_idx} batch] {depth+1} depth end, elapsed_time : {depth_elapsed_str}")
 
             # 모든 체인이 중단되었는지 확인
             if self.check_all_stop(query_results):

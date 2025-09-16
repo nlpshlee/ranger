@@ -1,6 +1,6 @@
 from _init import *
 
-import torch, random, unsloth
+import argparse, random, torch, unsloth
 
 from ranger.modules import common_util, json_util
 from ranger.chain_generator import ChainGenerator
@@ -51,7 +51,80 @@ def load_datas(train_data_path: str, test_data_path: str, seed: int, do_print=Fa
     return train_datas, test_datas
 
 
-def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, test_datas: list):
+'''
+    - vllm_config, model_config 모두에서 gpu device 를 설정하도록 되어 있었는데,
+        
+        - accelerator 를 사용하면서, model_config 의 device 를 python 명령어 실행 시점에서 제어하도록 변경됨
+
+            - CUDA_VISIBLE_DEVICES=0,1 accelerate launch --gpu_ids '1' ranger_runner.py
+                - [0,1]번 GPU를 사용하되, accelerator 를 이용한 학습은 '1'번 GPU에서 수행
+            
+            - CUDA_VISIBLE_DEVICES=1 accelerate launch --gpu_ids '1' ranger_runner.py
+                - 프로그램이 바라보는 GPU는 [1]번 뿐이고, 내부적으로는 '0'으로 인덱싱함
+                
+                - 그 상황에서 accelerator 가 '1'번을 참조하면 에러가 발생해야되는데, 내부적으로 '1'이 없으니까 '0'으로 자동 연결되는 줄 알았으나...
+
+                    - '1'로 설정해야 물리적인 '1'번 GPU에 할당되는게 맞음... 'unsloth' 때문이라고 추측됨...
+
+
+            - accelerator 에서도 여러 GPU를 사용하고 싶은 경우
+                - accelerate launch --gpu_ids '0,1'
+
+
+        - 이에 맞춰서, vllm_config(ChainGenerator) 도 python 명령어 실행 시점에서 제어하도록 변경
+
+            - CUDA_VISIBLE_DEVICES=0,1 accelerate launch --gpu_ids '1' ranger_runner.py --cg-device 0
+                - [0,1]번 GPU를 사용하고, ChainGenerator 는 0번 GPU에서, RANGERTrainer 는 1번 GPU에서 작업됨
+
+                    - 이게 돌아갈 것 같았지만, 데드락에 걸림
+
+                        - accelerate launch는 CUDA_VISIBLE_DEVICES=0,1 설정을 보고 사용 가능한 GPU가 2개라고 판단
+                        - 별도의 설정이 없으면, accelerate는 GPU 개수만큼 프로세스를 실행하여 분산 학습을 시도
+                        - 즉, ranger_runner.py 스크립트 전체를 실행하는 프로세스가 2개 생김
+                        - 프로세스 A는 0번 GPU에, 프로세스 B는 1번 GPU에 할당됨
+                        - 두 프로세스 모두 --cg-device 0 인자를 전달받아 ChainGenerator를 0번 GPU에서 초기화하려고 시도
+                        - 결과적으로 두 개의 무거운 프로세스가 동시에 0번 GPU의 리소스를 차지하려고 경쟁하다가 시스템이 멈춰버림
+
+            - 해결 방안 1 : --num_processes=1 추가
+
+                - CUDA_VISIBLE_DEVICES=0,1 accelerate launch --num_processes 1 --gpu_ids '1' ranger_runner.py --cg-device 0
+
+                    - 이렇게 해서 데드락은 풀렸지만, accelerator 가 설정한 GPU 환경을 unsloth 가 무조건 따르고 있어서, ChainGenerator 가 0번 GPU에 할당되지 않고 있음
+
+            - 해결 방안 2 : accelerate launch 사용 X
+
+                - accelerate launch가 실행 환경을 너무 강력하게 제어하여 unsloth가 다른 모든 설정을 무시하게 만드는 것이 원인
+                    - 일반 python 명령어로 스크립트를 실행하고, 코드 내에서 Accelerator가 어떤 GPU를 사용해야하는지 인자로 전달
+
+            - 해결 방안 3 : 다시 accelerate launch 사용하고, --gpu_ids 를 CUDA_VISIBLE_DEVICES 와 동일하게 설정
+
+                - CUDA_VISIBLE_DEVICES=0,1 accelerate launch --num_processes 1 --gpu_ids '0,1' ranger_runner.py --cg-device 0 --rt-device 1
+                    - rt_device 는 현재 상태에선 사용되지 않음
+                    - 해결 안됨 : 결국 ChainGenerator 랑 RANGERTrainer 를 완전히 분리해야 함...
+
+
+        - 단일 GPU를 사용할 때는 어떤 GPU 를 할당해줘도 내부적으로는 '0'번 하나만 인식되므로 별도의 옵션을 주지 않아도 됨 (디폴트 설정되어 있음)
+
+            - CUDA_VISIBLE_DEVICES=0 accelerate launch --gpu_ids '0' ranger_runner.py --cg-device 0
+
+            - CUDA_VISIBLE_DEVICES=1 accelerate launch --gpu_ids '0' ranger_runner.py --cg-device 0
+
+                - '1'번 GPU에 할당되어야 하는데, '0'번 GPU에 할당됨... accelerator 가 물리적인 번호를 보고 있는 것 같음...
+                - 헷갈리니까 아래처럼 옵션 안 주는걸로...
+
+            - CUDA_VISIBLE_DEVICES=0 python ranger_runner.py
+            - CUDA_VISIBLE_DEVICES=1 python ranger_runner.py
+
+
+    - 최종 사용 명령어
+
+        - 멀티 GPU (0,1번 GPU 사용)
+            - 해결 안됨
+        
+        - 싱글 GPU (1번 GPU만 사용)
+            - CUDA_VISIBLE_DEVICES=1 python ranger_runner.py
+'''
+def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, test_datas: list, cg_device='0', rt_device='0'):
     # 기본(공통) Config
     dtype = 'float16'
     max_model_len = 4096
@@ -60,15 +133,15 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     # 1. ChainGenerator 생성 (vllm engine)
     vllm_config = {
         "model_name": model_name,
-        "task_desc": "answer multi-hop questions",
-        'device': 'cuda:0',
+        'device': f'cuda:{cg_device}',
         'gpu_memory_utilization': 0.30,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
         'top_k_query': 20,                          # main query 검색 문서 수
         'top_k_sub_query': 5,                       # sub query  검색 문서 수
-        'temperature': 0.7                          # 체인이 다양하게 생성되어야 하기 때문에, 높은 값 할당
+        'temperature': 0.7,                         # 체인이 다양하게 생성되어야 하기 때문에, 높은 값 할당
+        "task_desc": "answer multi-hop questions"
     }
 
     chain_generator = ChainGenerator(vllm_config, USE_GPU_IDS)
@@ -80,7 +153,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     # 3. RangerTrainer 생성
     model_config = {
         "model_name": model_name,
-        'device': 'cuda:0',
+        'device': f'cuda:{rt_device}',
         'gpu_memory_utilization': 0.30,
         'dtype': dtype,
         'max_model_len': max_model_len,
@@ -94,6 +167,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     }
 
     grpo_config = {
+        'gradient_accumulation_steps': 3,           # Gradient Accumulation (실제 loss가 반영되는 가상의 배치 사이즈)
         'learning_rate': 1e-6,                       # learning rate for `AdamW` optimizer
         'epsilon': 0.2,                              # CLIP epsilon
         'beta': 0.04                                 # KL coefficient
@@ -106,19 +180,24 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
                                    out_dir,
                                    USE_GPU_IDS)
 
-    print(f'\n# ranger_runner.run_base() start time : {common_util.get_datetime_now()}\n')
+    print(f'\n# ranger_runner.run_base() start datetime : {common_util.get_datetime_now()}\n')
 
     '''
         - batch_size 는 '1'로 고정하고, 'Accelerate'를 이용하여 'Gradient Accumulation' 적용
             - batch_size 를 키우면, OOM 발생
     '''
-    epochs, batch_size, n_chains, chain_depth = 3, 1, 2, 3
+    epochs, batch_size, n_chains, chain_depth = 3, 1, 5, 5
     ranger_trainer.train(train_datas[:10], epochs, batch_size, n_chains, chain_depth)
 
-    print(f'\n# ranger_runner.run_base() end time : {common_util.get_datetime_now()}\n')
+    print(f'\n# ranger_runner.run_base() end datetime : {common_util.get_datetime_now()}\n')
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--cg-device', type=str, default='0', help='Device for ChainGenerator (VLLM)')
+    parser.add_argument('--rt-device', type=str, default='0', help='Device for RANGERTrainer')
+    args = parser.parse_args()
+
     work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
     data_dir = f'{work_dir}/data'
     out_dir = f'{work_dir}/output'
@@ -132,5 +211,5 @@ if __name__ == "__main__":
 
     # model_name = 'meta-llama/Meta-Llama-3-8B-Instruct'
     model_name = 'meta-llama/Llama-3.2-3B-Instruct'
-    run_base(data_dir, f'{out_dir}/test', model_name, train_datas, test_datas)
+    run_base(data_dir, f'{out_dir}/test', model_name, train_datas, test_datas, args.cg_device, args.rt_device)
 

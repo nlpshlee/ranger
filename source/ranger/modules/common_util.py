@@ -40,6 +40,25 @@ def get_datetime_now(expression: str="%Y-%m-%d %H:%M:%S"):
     return date_now.strftime(expression)
 
 
+def get_elapsed_time_ms(start, end=None, do_print=False):
+    if end is None:
+        end = get_time_ms()
+    
+    elapsed = end - start
+
+    elapsed = elapsed // 1000
+    h = elapsed // 3600
+    m = (elapsed % 3600) // 60
+    s = elapsed % 60
+
+    elapsed_str = f'{h:02d}:{m:02d}:{s:02d}'
+
+    if do_print:
+        print(f'# common_util.get_elapsed_time_ms() : {elapsed_str}')
+    
+    return elapsed, elapsed_str
+
+
 def check_gpu_memory_of_torch(devices=[0], prefix='', do_print=True):
     if not torch.cuda.is_available():
         if do_print:
