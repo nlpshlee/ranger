@@ -22,6 +22,16 @@ def download_datas(path, name, split, out_file_path):
 
 class ChainGenerateTime:
     def __init__(self):
+        self._prev_time: int
+        self._cur_time: int
+
+        self._chain_generate_times: list
+        self._chain_generate_sizes: list
+        self._vllm_called_cnts: list
+        self.reset()
+
+
+    def reset(self):
         self._prev_time = -1
         self._cur_time = -1
 
@@ -122,11 +132,13 @@ class ChainGenerator:
             )
 
 
-    def chain_generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', do_print=False, do_reset=False):
+    def reset(self):
+        self._corag_agent.reset()
+        self._chain_generate_time.reset()
+
+
+    def chain_generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', do_print=False):
         print(f'\n# ChainGenerator.chain_generate() [start] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
-        if do_reset:
-            self._corag_agent.reset()
-        
         results = []
         data_size = len(datas)
 

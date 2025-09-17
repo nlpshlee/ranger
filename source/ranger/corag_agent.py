@@ -13,6 +13,7 @@ from ranger.corag.data_utils import format_documents_for_final_answer, format_in
 from ranger.corag.prompts import get_generate_subquery_prompt, get_generate_intermediate_answer_prompt, get_generate_final_answer_prompt
 from ranger.corag.utils import batch_truncate
 from ranger.corag.data_utils import load_corpus
+from ranger.corag.inference.metrics import compute_em_and_f1
 from ranger.corag.config import Arguments
 
 from ranger.vllm.vllm_agent import VllmAgent
@@ -73,6 +74,18 @@ class QueryResult:
         self._chain_results = []
         self._doc_ids = []
         self._documents = []
+        self._em = -1
+        self._f1 = -1
+    
+
+    def compute_metrics(self):
+        if len(self._chain_results) != 1:
+            print(f'\n# [error] QueryResult.compute_metrics() [ len(chain_results) != 1 ], query_id : {self._query_id}\n')
+
+        temp = compute_em_and_f1([[self._answer]], [self._chain_results[0]._final_answers[-1]])
+
+        self._em = temp['em']
+        self._f1 = temp['f1']
 
 
 class ChainResult:
@@ -147,6 +160,7 @@ class CoRagAgent:
 
     def reset(self):
         self._batch_idx = 0
+        self._vllm_agent.reset()
 
 
     def _truncate_long_messages(self, messages: List[Dict]):

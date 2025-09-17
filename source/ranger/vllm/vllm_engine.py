@@ -39,7 +39,9 @@ class VllmEngine(VllmAgent):
             # max_loras=1
         )
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._model_name)
+        
         self._called_cnt = 0
+        self._called_cnt_all = 0
 
 
     def _get_generated_text(self, completion: CompletionOutput) -> str:
@@ -114,9 +116,10 @@ class VllmEngine(VllmAgent):
             results.append(self._make_generate_result(completion, return_toks_log_probs, do_print))
         
         self._called_cnt += 1
+        self._called_cnt_all += 1
         if do_print:
-            if self._called_cnt % 100 == 0:
-                print(f'# VllmEngine.generate_batch() vllm called_cnt : {self._called_cnt}')
+            if self._called_cnt_all % 100 == 0:
+                print(f'# VllmEngine.generate_batch() [vllm] called_cnt : {self._called_cnt}, called_cnt_all : {self._called_cnt_all}')
         
         return results
 

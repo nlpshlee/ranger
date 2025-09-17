@@ -14,7 +14,12 @@ class VllmAgent(ABC):
         self._max_model_len: int
         self._max_token_gen: int
         self._called_cnt: int
-    
+        self._called_cnt_all: int
+
+
+    def reset(self):
+        self._called_cnt = 0
+
 
     @abstractmethod
     def _get_generated_text(self, result: Any) -> str:

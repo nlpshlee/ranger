@@ -2,6 +2,7 @@ from _init import *
 
 from typing import List
 import numpy as np
+import wandb
 
 import torch
 from torch.nn.functional import log_softmax
@@ -19,6 +20,7 @@ from ranger.corag_agent import QueryResult, ChainResult
 
 
 NULL_FLOAT = np.finfo(np.float32).min
+DO_REVIEW_TRAIN, DO_REVIEW_TEST = True, True
 
 
 class RANGERTrainer(Trainer):
@@ -76,6 +78,10 @@ class RANGERTrainer(Trainer):
         # Output 경로 설정
         self._run_time = common_util.get_datetime_now("%Y-%m-%d-%H-%M-%S")
         self._adapter_path = f'{self._out_dir}/lora_adapter_{self._run_time}'
+
+        self._global_step = 0
+        self._train_epoch_results = []
+        self._test_epoch_results = []
 
 
     def _set_config(self, model_config: dict, grpo_config: dict):
@@ -148,6 +154,10 @@ class RANGERTrainer(Trainer):
             print(f'# RANGERTrainer._init_model() Failed : {self._model_name}')
 
 
+    def _reset_epoch(self):
+        self._chain_generator.reset()
+    
+    
     def _save_adapter_for_vllm(self, step_name: str, step: int):
         print(f'\n# RANGERTrainer._save_adapter_for_vllm() {step_name} : {step}')
 
@@ -168,7 +178,11 @@ class RANGERTrainer(Trainer):
 
         # 2. 그룹(하나의 query) 내 리워드의 평균과 표준편차 계산
         mean_reward = rewards.mean()
-        std_reward = rewards.std()
+
+        if rewards.numel() > 1:
+            std_reward = rewards.std()
+        else:
+            std_reward = 0
 
         # 3. Advantage 계산: (개별 리워드 - 평균 리워드) / (표준편차 + epsilon)
         advantages = (rewards - mean_reward) / (std_reward + epsilon)
@@ -523,26 +537,28 @@ class RANGERTrainer(Trainer):
         return batch_loss.item()
 
 
-    def train(self, train_datas, epochs, batch_size, n_chains, chain_depth):
+    def train(self, train_datas, test_datas, epochs, batch_size, n_chains, chain_depth):
         print(f'\n# RANGERTrainer.train() [train_data_size : {len(train_datas)}], [epochs : {epochs}, batch_size : {batch_size}], [n_chains : {n_chains}, chain_depth : {chain_depth}]')
         print(f'\tstart datetime : {common_util.get_datetime_now()}\n')
         train_start = common_util.get_time_ms()
 
         self._train_datas = train_datas
+        self._test_datas = test_datas
         data_size = len(train_datas)
 
-        epoch_results = []
-        # epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, '[base]')
-        # epoch_results.append(epoch_result)
+        # 0. [base] 성능 측정
+        self.evaluate_all(0, batch_size, 1, chain_depth, True, True)
 
         for epoch in range(1, epochs+1):
             print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] start : {common_util.get_datetime_now()} {"#"*25}\n')
+            self._reset_epoch()
             epoch_start = common_util.get_time_ms()
 
             all_batch_loss = []
             batch_len = (data_size + batch_size - 1) // batch_size
 
             for batch_idx, datas_batch in enumerate(container_util.chunks(self._train_datas, batch_size)):
+                self._global_step += 1
                 start = batch_idx * batch_size
                 end = min(data_size-1, (batch_idx+1) * batch_size-1)
                 print(f'# RANGERTrainer.train() [ {batch_idx+1} batch ] start, datas size : {len(datas_batch)}({start} ~ {end})\n')
@@ -562,19 +578,14 @@ class RANGERTrainer(Trainer):
                 for query_result in query_results:
                     self._calculate_advantages(query_result)
 
-                    # print(f'query_id : {query_result._query_id}, query : {query_result._query}, answer : {query_result._answer}\n')
-                    # chain_results: List[ChainResult] = query_result._chain_results
-                    # for chain_idx, chain_result in enumerate(chain_results):
-                    #     print(f'chain_idx : {chain_idx}')
-                    #     chain_result.print_chain()
-
-
-
                 # 4. GRPO loss 계산 및 모델 학습
                 batch_loss = self._train_batch(query_results)
                 all_batch_loss.append(batch_loss)
 
-                # 5. Accelerator 를 이용한 gradient accumulation
+                # 5. wandb 로깅
+                self._wandb_logging_train_batch(epoch, batch_idx+1, query_results, batch_loss)
+
+                # 6. Accelerator 를 이용한 gradient accumulation
                 '''
                     - 싱글 GPU를 사용할 경우, self.accelerator.sync_gradients 는 무조건 True
                         - 애초에 멀티 GPU 환경에서 사용되는 라이브러리
@@ -596,17 +607,19 @@ class RANGERTrainer(Trainer):
                 print(f'# RANGERTrainer.train() [ {batch_idx+1} batch ] end, elapsed_time : {batch_elapsed_str}\n')
 
 
-
-            # 6. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
+            # 7. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
             self._save_adapter_for_vllm('epoch', epoch)
 
             _, epoch_elapsed_str = common_util.get_elapsed_time_ms(epoch_start)
             print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] end : {common_util.get_datetime_now()}, elapsed : {epoch_elapsed_str} {"#"*25}\n')
 
-            epoch_result = self.evaluate(self._train_datas, batch_size, n_chains, chain_depth, f'[ {epoch} epoch ]')
-            epoch_results.append(epoch_result)
-        
-        self.write_results(epoch_results)
+            # 8. 현재 epoch 학습 완료 후, 성능 측정
+            self.evaluate_all(epoch, batch_size, 1, chain_depth, True, True)
+
+
+        # 전체 epoch에 대해 각 epoch 별로 결과를 비교한 파일 생성 (검토 전용)
+        if DO_REVIEW_TRAIN: self.write_results('train', self._train_epoch_results)
+        if DO_REVIEW_TEST: self.write_results('test', self._test_epoch_results)
         
         _, train_elapsed_str = common_util.get_elapsed_time_ms(train_start)
         print(f'# RANGERTrainer.train() end datetime : {common_util.get_datetime_now()}, elapsed : {train_elapsed_str}\n')
@@ -615,15 +628,33 @@ class RANGERTrainer(Trainer):
 
 
 
-    def evaluate(self, datas, batch_size, n_chains, chain_depth, prefix):
-        print(f'\n{"#"*25} RANGERTrainer.evaluate() {prefix} start : {common_util.get_datetime_now()} {"#"*25}')
+    def evaluate_all(self, epoch, batch_size, n_chains, chain_depth, do_train=False, do_test=False):
+        if do_train:
+            epoch_result = self.evaluate('train', self._train_datas, epoch, batch_size, n_chains, chain_depth)
+            if DO_REVIEW_TRAIN:
+                self._train_epoch_results.append(epoch_result)
+        if do_test:
+            epoch_result = self.evaluate('test', self._test_datas, epoch, batch_size, n_chains, chain_depth)
+            if DO_REVIEW_TEST:
+                self._test_epoch_results.append(epoch_result)
+
+
+    def evaluate(self, prefix, datas, epoch, batch_size, n_chains, chain_depth):
+        prefix_org = prefix
+        if epoch == 0:
+            prefix = f'[base] {prefix}'
+        else:
+            prefix = f'[{epoch} epoch] {prefix}'
+
+        print(f'\n{"#"*25} RANGERTrainer.evaluate() {prefix} start : {common_util.get_datetime_now()} {"#"*25}\n')
+        self._reset_epoch()
         evaluate_start = common_util.get_time_ms()
 
         all_query_results = []
 
         with torch.no_grad():
-            for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
-                print(f'# RANGERTrainer.evaluate() {prefix} - [ {i+1} batch ] start : {common_util.get_datetime_now()}')
+            for batch_idx, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
+                print(f'# RANGERTrainer.evaluate() {prefix} - [ {batch_idx+1} batch ] start : {common_util.get_datetime_now()}')
 
                 # 1. 체인 생성
                 query_results: List[QueryResult] = self._chain_generator.chain_generate(datas_batch,
@@ -644,15 +675,46 @@ class RANGERTrainer(Trainer):
                     for chain_result in chain_results:
                         chain_result.make_get_completion()
                 
+                    # 5. 성능 측정
+                    query_result.compute_metrics()
+
                 all_query_results.extend(query_results)
+        
+        # 6. wandb 로깅
+        self._wandb_logging_evaluate(prefix_org, epoch, query_results)
         
         _, evaluate_elapsed_str = common_util.get_elapsed_time_ms(evaluate_start)
         print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} end : {common_util.get_datetime_now()}, elapsed : {evaluate_elapsed_str} {"#"*25}\n')
 
         return all_query_results
+    
+
+    def _wandb_logging_train_batch(self, epoch, batch, query_results: List[QueryResult], batch_loss):
+        avg_reward, avg_advantage = _get_avg_reward_and_advantage(query_results)
+        
+        wandb.log({
+            'epoch': epoch,
+            'batch': batch,
+            'train_batch/avg_reward': avg_reward,
+            'train_batch/avg_advantage': avg_advantage,
+            'train_batch/loss': batch_loss
+        }, step=self._global_step)
 
 
-    def write_results(self, epoch_results:List[List[QueryResult]]):
+    def _wandb_logging_evaluate(self, prefix, epoch, query_results: List[QueryResult]):
+        avg_reward, avg_advantage = _get_avg_reward_and_advantage(query_results)
+        avg_em, avg_f1 = _get_avg_em_and_f1(query_results)
+        
+        wandb.log({
+            'epoch': epoch,
+            f'evaluate_{prefix}/avg_reward': avg_reward,
+            # f'evaluate_{prefix}/avg_advantage': avg_advantage,
+            f'evaluate_{prefix}/avg_em': avg_em,
+            f'evaluate_{prefix}/avg_f1': avg_f1
+        }, step=self._global_step)
+
+
+    def write_results(self, prefix, epoch_results:List[List[QueryResult]]):
         epoch_len = len(epoch_results)
         query_len = len(epoch_results[0])
 
@@ -686,14 +748,14 @@ class RANGERTrainer(Trainer):
                 epoch_outputs = {}
                 prev_avg_reward, prev_avg_advantage = NULL_FLOAT, NULL_FLOAT
 
-                for i, chain_results in enumerate(all_chain_results):
+                for epoch_idx, chain_results in enumerate(all_chain_results):
                     epoch_output = {}
 
                     n_chains = len(chain_results)
                     all_reward, all_advantage = [], []
 
-                    for j in range(n_chains):
-                        chain_result: ChainResult = chain_results[j]
+                    for chain_idx in range(n_chains):
+                        chain_result: ChainResult = chain_results[chain_idx]
                         chain_output = {}
 
                         chain_output['reward'] = chain_result._reward
@@ -702,18 +764,18 @@ class RANGERTrainer(Trainer):
                         all_advantage.append(chain_result._advantage)
 
                         chain_depth = len(chain_result._sub_querys)
-                        for k in range(chain_depth):
-                            sub_query = chain_result._sub_querys[k]
-                            sub_answer = chain_result._sub_answers[k]
-                            final_answer = chain_result._final_answers[k]
+                        for depth_idx in range(chain_depth):
+                            sub_query = chain_result._sub_querys[depth_idx]
+                            sub_answer = chain_result._sub_answers[depth_idx]
+                            final_answer = chain_result._final_answers[depth_idx]
 
-                            chain_output[f'depth_{k+1}'] = {
+                            chain_output[f'depth_{depth_idx+1}'] = {
                                 'sub_query': sub_query,
                                 'sub_answer': sub_answer,
                                 'final_answer': final_answer
                             }
                         
-                        epoch_output[f'chain_{j+1}'] = chain_output
+                        epoch_output[f'chain_{chain_idx+1}'] = chain_output
                     
                     epoch_output['reward_all'] = all_reward
                     avg_reward, diff_reward_sign, diff_reward_value = _get_avg_and_diff_from_prev(all_reward, n_chains, prev_avg_reward)
@@ -728,15 +790,15 @@ class RANGERTrainer(Trainer):
                     prev_avg_reward = avg_reward
                     prev_avg_advantage = avg_advantage
                     
-                    if i == 0:
+                    if epoch_idx == 0:
                         epoch_outputs['base'] = epoch_output
                     else:
-                        epoch_outputs[f'epoch_{i+1}'] = epoch_output
+                        epoch_outputs[f'epoch_{epoch_idx}'] = epoch_output
 
                 write_dict['epoch_outputs'] = epoch_outputs
                 all_write_dict.append(write_dict)
         
-        out_file_path = f'{self._out_dir}/output_dict_{self._run_time}.json'
+        out_file_path = f'{self._out_dir}/output_dict_{self._run_time}_{prefix}.json'
         json_util.write_file(all_write_dict, out_file_path)
 
 
@@ -746,16 +808,53 @@ class RANGERTrainer(Trainer):
 def _get_avg_and_diff_from_prev(all_value: list, n_chains: int, prev_avg: float):
     avg_value = sum(all_value) / n_chains
 
-    if prev_avg == NULL_FLOAT or prev_avg == avg_value:
+    if (prev_avg == NULL_FLOAT and avg_value != NULL_FLOAT):
         diff_value = 0
-        diff_sign = '변화 없음'
+        diff_sign = '-'
     else:
         diff_value = avg_value - prev_avg
 
         if prev_avg < avg_value:
-            diff_sign = '증가'
+            diff_sign = '+'
         elif prev_avg > avg_value:
-            diff_sign = '감소'
-    
+            diff_sign = '-'
+        else:
+            diff_sign = '-'
+
     return avg_value, diff_sign, diff_value
+
+
+def _get_avg_reward_and_advantage(query_results: List[QueryResult]):
+    batch_rewards, batch_advantages = [], []
+
+    for query_result in query_results:
+        chain_results: List[ChainResult] = query_result._chain_results
+
+        for chain_result in chain_results:
+            batch_rewards.append(chain_result._reward)
+            batch_advantages.append(chain_result._advantage)
+    
+    if len(batch_rewards) > 0:
+        avg_reward = sum(batch_rewards) / len(batch_rewards)
+        avg_advantage = sum(batch_advantages) / len(batch_advantages)
+    else:
+        avg_reward, avg_advantage = NULL_FLOAT, NULL_FLOAT
+    
+    return avg_reward, avg_advantage
+
+
+def _get_avg_em_and_f1(query_results: List[QueryResult]):
+    all_em, all_f1 = [], []
+
+    for query_result in query_results:
+        all_em.append(query_result._em)
+        all_f1.append(query_result._f1)
+
+    if len(all_em) > 0:
+        avg_em = sum(all_em) / len(all_em)
+        avg_f1 = sum(all_f1) / len(all_f1)
+    else:
+        avg_em, avg_f1 = NULL_FLOAT, NULL_FLOAT
+    
+    return avg_em, avg_f1
 

@@ -51,6 +51,8 @@ elasticsearch-7.10.1/config/elasticsearch.yml
     > network.host: 127.0.0.1   # 외부 접속 허용 시 필요 (기본은 localhost)
 ```
 
+## Run Preparation
+
 (1) ElasticSearch Server Start
 ```bash
 cd elasticsearch-7.10.1/bin/
@@ -87,7 +89,29 @@ bash scripts/start_vllm_server.sh
 모든 프로세스 종료
 ```bash
 bash scripts/kill_all.sh
-    > bash $SCRIPT_DIR/kill_process.sh elasticsearch
-    > bash $SCRIPT_DIR/kill_process.sh retriever
-    > bash $SCRIPT_DIR/kill_process.sh vllm
+    > bash scripts/kill_process.sh elasticsearch
+    > bash scripts/kill_process.sh retriever
+    > bash scripts/kill_process.sh vllm
+```
+
+wandb login
+```bash
+wandb login (or wandb login --relogin)
+
+    wandb: Logging into wandb.ai. (Learn how to deploy a W&B server locally: https://wandb.me/wandb-server)
+    wandb: You can find your API key in your browser here: https://wandb.ai/authorize?ref=models
+    wandb: Paste an API key from your profile and hit enter, or press ctrl+c to quit: <API 키 입력>
+```
+
+## Main Run
+
+```bash
+cd source/ranger
+
+# single gpu ('o' or '1')
+CUDA_VISIBLE_DEVICES=0 python -u ranger_runner.py > ../../logs/ranger.log
+CUDA_VISIBLE_DEVICES=1 python -u ranger_runner.py > ../../logs/ranger.log
+
+# log file monitoring
+tail -f logs/ranger.log
 ```

@@ -1,6 +1,6 @@
 from _init import *
 
-import argparse, random, torch, unsloth
+import argparse, random, torch, wandb, unsloth
 
 from ranger.modules import common_util, json_util
 from ranger.chain_generator import ChainGenerator
@@ -180,15 +180,35 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
                                    out_dir,
                                    USE_GPU_IDS)
 
-    print(f'\n# ranger_runner.run_base() start datetime : {common_util.get_datetime_now()}\n')
-
     '''
         - batch_size 는 '1'로 고정하고, 'Accelerate'를 이용하여 'Gradient Accumulation' 적용
             - batch_size 를 키우면, OOM 발생
     '''
     epochs, batch_size, n_chains, chain_depth = 3, 1, 5, 5
-    ranger_trainer.train(train_datas[:10], epochs, batch_size, n_chains, chain_depth)
 
+    wandb.init(
+        # project=f'RANGER-GRPO-Training [{common_util.get_datetime_now("%Y%m%d %H %M %S")}]',
+        project=f'RANGER-GRPO-Training-1',
+        config={
+            'model_name': model_name,
+            'max_model_len': max_model_len,
+            'max_token_gen': max_token_gen,
+            'search_top_k_query': vllm_config['top_k_query'],
+            'search_top_k_sub_query': vllm_config['top_k_sub_query'],
+            'temperature': vllm_config['temperature'],
+            'lora_r': model_config['lora_r'],
+            'lora_target_modules': model_config['lora_target_modules'],
+            'lora_alpha': model_config['lora_alpha'],
+            'gradient_accumulation_steps': grpo_config['gradient_accumulation_steps'],
+            'epochs': epochs,
+            'batch_size': batch_size,
+            'n_chains': n_chains,
+            'chain_depth': chain_depth
+        }
+    )
+
+    print(f'\n# ranger_runner.run_base() start datetime : {common_util.get_datetime_now()}\n')
+    ranger_trainer.train(train_datas[:10], test_datas[:5], epochs, batch_size, n_chains, chain_depth)
     print(f'\n# ranger_runner.run_base() end datetime : {common_util.get_datetime_now()}\n')
 
 

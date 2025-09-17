@@ -7,4 +7,5 @@ elasticsearch-7.10.1
 data
 logs
 output*
+wandb
 unsloth_compiled_cache

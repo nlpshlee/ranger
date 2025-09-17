@@ -1,8 +1,8 @@
 from nltk.tokenize import word_tokenize
 from nltk.util import bigrams
 from typing import List, Dict, Union
-from inference import qa_utils
-from logger_config import logger
+
+from ranger.corag.inference import qa_utils
 
 
 # Document-Relevance Metrics
@@ -55,7 +55,7 @@ def compute_metrics_dict(labels: Union[List[str], List[List[str]]], preds: List[
         if metric_name in ['em_and_f1', 'dpr']:
             metric_dict.update(compute_em_and_f1(labels, preds))
         elif metric_name == 'kilt':
-            logger.warning('KILT metric requires run separate script')
+            pass
         else:
             raise ValueError(f'Invalid metric: {metric_name}')
 
