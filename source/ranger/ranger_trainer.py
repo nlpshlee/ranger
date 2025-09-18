@@ -9,7 +9,7 @@ from torch.nn.functional import log_softmax
 from torch.optim import AdamW
 # torch.autograd.set_detect_anomaly(True)
 
-from transformers import Trainer, AutoModelForCausalLM, AutoTokenizer
+from transformers import Trainer, TrainingArguments, AutoModelForCausalLM, AutoTokenizer
 from accelerate import Accelerator
 from unsloth import FastLanguageModel
 
@@ -72,7 +72,8 @@ class RANGERTrainer(Trainer):
         super().__init__(
             model=self.model,
             processing_class=self.processing_class,
-            optimizers=(self.optimizer, None)
+            optimizers=(self.optimizer, None),
+            args=TrainingArguments(output_dir=self._out_dir)
         )
 
         # Output 경로 설정
