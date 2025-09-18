@@ -39,8 +39,8 @@ class Arguments(TrainingArguments):
     decode_strategy: str = field(default='greedy', metadata={'help': 'decoding strategy'})
     best_n: int = field(default=4, metadata={'help': 'best of n'})
 
-    def __post_init__(self):
-        super(Arguments, self).__post_init__()
+    # def __post_init__(self):
+    #     super(Arguments, self).__post_init__()
 
-        if self.output_dir:
-            os.makedirs(self.output_dir, exist_ok=True)
+    #     if self.output_dir:
+    #         os.makedirs(self.output_dir, exist_ok=True)

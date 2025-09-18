@@ -91,7 +91,7 @@ def predict_final_answer(query, path):
     from ranger.corag.config import Arguments
     import threading
     
-    args = Arguments(output_dir="/home/softstone/saltlux/data/output")
+    args = Arguments()
     tokenizer_lock: threading.Lock = threading.Lock()
     
     retriever_results: List[Dict] = search_by_http(query=query, topk=20)
