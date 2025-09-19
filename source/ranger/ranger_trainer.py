@@ -548,7 +548,7 @@ class RANGERTrainer(Trainer):
         data_size = len(train_datas)
 
         # 0. [base] 성능 측정
-        self.evaluate_all(0, batch_size, 1, chain_depth, True, True)
+        self.evaluate_all(0, batch_size, n_chains, chain_depth, True, True)
 
         for epoch in range(1, epochs+1):
             print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] start : {common_util.get_datetime_now()} {"#"*25}\n')
@@ -615,7 +615,7 @@ class RANGERTrainer(Trainer):
             print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] end : {common_util.get_datetime_now()}, elapsed : {epoch_elapsed_str} {"#"*25}\n')
 
             # 8. 현재 epoch 학습 완료 후, 성능 측정
-            self.evaluate_all(epoch, batch_size, 1, chain_depth, True, True)
+            self.evaluate_all(epoch, batch_size, n_chains, chain_depth, True, True)
 
 
         # 전체 epoch에 대해 각 epoch 별로 결과를 비교한 파일 생성 (검토 전용)
@@ -635,7 +635,7 @@ class RANGERTrainer(Trainer):
             if DO_REVIEW_TRAIN:
                 self._train_epoch_results.append(epoch_result)
         if do_test:
-            epoch_result = self.evaluate('test', self._test_datas, epoch, batch_size, n_chains, chain_depth)
+            epoch_result = self.evaluate('test', self._test_datas, epoch, batch_size, 1, chain_depth)
             if DO_REVIEW_TEST:
                 self._test_epoch_results.append(epoch_result)
 
@@ -682,7 +682,7 @@ class RANGERTrainer(Trainer):
                 all_query_results.extend(query_results)
         
         # 6. wandb 로깅
-        self._wandb_logging_evaluate(prefix_org, epoch, query_results)
+        self._wandb_logging_evaluate(prefix_org, epoch, all_query_results)
         
         _, evaluate_elapsed_str = common_util.get_elapsed_time_ms(evaluate_start)
         print(f'{"#"*25} RANGERTrainer.evaluate() {prefix} end : {common_util.get_datetime_now()}, elapsed : {evaluate_elapsed_str} {"#"*25}\n')
@@ -701,6 +701,8 @@ class RANGERTrainer(Trainer):
             'train_batch/loss': batch_loss
         }, step=self._global_step)
 
+        print(f'\n# RANGERTrainer._wandb_logging_train_batch() [{epoch} epoch - {batch} batch] avg_reward : {avg_reward}, avg_advantage : {avg_advantage}\n')
+
 
     def _wandb_logging_evaluate(self, prefix, epoch, query_results: List[QueryResult]):
         avg_reward, avg_advantage = _get_avg_reward_and_advantage(query_results)
@@ -713,6 +715,8 @@ class RANGERTrainer(Trainer):
             f'evaluate_{prefix}/avg_em': avg_em,
             f'evaluate_{prefix}/avg_f1': avg_f1
         }, step=self._global_step)
+
+        print(f'\n# RANGERTrainer._wandb_logging_evaluate() {prefix} [{epoch} epoch] avg_reward : {avg_reward}, avg_em : {avg_em}, avg_f1 : {avg_f1}\n')
 
 
     def write_results(self, prefix, epoch_results:List[List[QueryResult]]):
@@ -748,21 +752,23 @@ class RANGERTrainer(Trainer):
 
                 epoch_outputs = {}
                 prev_avg_reward, prev_avg_advantage = NULL_FLOAT, NULL_FLOAT
+                prev_avg_em, prev_avg_f1 = NULL_FLOAT, NULL_FLOAT
 
                 for epoch_idx, chain_results in enumerate(all_chain_results):
                     epoch_output = {}
 
                     n_chains = len(chain_results)
                     all_reward, all_advantage = [], []
+                    all_em, all_f1 = [], []
 
                     for chain_idx in range(n_chains):
                         chain_result: ChainResult = chain_results[chain_idx]
                         chain_output = {}
 
-                        chain_output['reward'] = chain_result._reward
-                        chain_output['advantage'] = chain_result._advantage
-                        all_reward.append(chain_result._reward)
-                        all_advantage.append(chain_result._advantage)
+                        _set_chain_output(chain_output, 'reward', chain_result._reward, all_reward)
+                        _set_chain_output(chain_output, 'advantage', chain_result._advantage, all_advantage)
+                        _set_chain_output(chain_output, 'em', chain_result._em, all_em)
+                        _set_chain_output(chain_output, 'f1', chain_result._f1, all_f1)
 
                         chain_depth = len(chain_result._sub_querys)
                         for depth_idx in range(chain_depth):
@@ -775,22 +781,14 @@ class RANGERTrainer(Trainer):
                                 'sub_answer': sub_answer,
                                 'final_answer': final_answer
                             }
-                        
+
                         epoch_output[f'chain_{chain_idx+1}'] = chain_output
-                    
-                    epoch_output['reward_all'] = all_reward
-                    avg_reward, diff_reward_sign, diff_reward_value = _get_avg_and_diff_from_prev(all_reward, n_chains, prev_avg_reward)
-                    epoch_output['reward_avg'] = avg_reward
-                    epoch_output['reward_diff'] = [diff_reward_sign, diff_reward_value]
 
-                    epoch_output['advantage_all'] = all_advantage
-                    avg_advantage, diff_advantage_sign, diff_advantage_value = _get_avg_and_diff_from_prev(all_advantage, n_chains, prev_avg_advantage)
-                    epoch_output['advantage_avg'] = avg_advantage
-                    epoch_output['advantage_diff'] = [diff_advantage_sign, diff_advantage_value]
+                    prev_avg_reward = _set_epoch_output(epoch_output, 'reward', all_reward, prev_avg_reward)
+                    prev_avg_advantage = _set_epoch_output(epoch_output, 'advantage', all_advantage, prev_avg_advantage)
+                    prev_avg_em = _set_epoch_output(epoch_output, 'em', all_em, prev_avg_em)
+                    prev_avg_f1 = _set_epoch_output(epoch_output, 'f1', all_f1, prev_avg_f1)
 
-                    prev_avg_reward = avg_reward
-                    prev_avg_advantage = avg_advantage
-                    
                     if epoch_idx == 0:
                         epoch_outputs['base'] = epoch_output
                     else:
@@ -806,23 +804,42 @@ class RANGERTrainer(Trainer):
 '''
     전체 값으로 평균을 계산하고, 이전 평균하고의 차이까지 계산
 '''
-def _get_avg_and_diff_from_prev(all_value: list, n_chains: int, prev_avg: float):
-    avg_value = sum(all_value) / n_chains
+def _get_avg_and_diff_from_prev(all_value: list, prev_avg_value: float):
+    avg_value = sum(all_value) / len(all_value)
 
-    if (prev_avg == NULL_FLOAT and avg_value != NULL_FLOAT):
+    if (prev_avg_value == NULL_FLOAT and avg_value != NULL_FLOAT):
         diff_value = 0
-        diff_sign = '-'
+        diff_sign = '0'
     else:
-        diff_value = avg_value - prev_avg
+        diff_value = avg_value - prev_avg_value
 
-        if prev_avg < avg_value:
+        if prev_avg_value < avg_value:
             diff_sign = '+'
-        elif prev_avg > avg_value:
+        elif prev_avg_value > avg_value:
             diff_sign = '-'
         else:
-            diff_sign = '-'
+            diff_sign = '0'
 
-    return avg_value, diff_sign, diff_value
+    return avg_value, diff_value, diff_sign
+
+
+def _set_chain_output(chain_output: dict, attribute: str, value, all_value: list):
+    chain_output[attribute] = value
+    all_value.append(value)
+
+def _set_epoch_output(epoch_output: dict, attribute: str, all_value: list, prev_avg_value: float):
+    epoch_output[f'{attribute}'] = {}
+    epoch_output[f'{attribute}']['all'] = all_value
+    epoch_output[f'{attribute}']['max'] = max(all_value)
+    epoch_output[f'{attribute}']['min'] = min(all_value)
+    
+    avg_value, diff_value, diff_sign = _get_avg_and_diff_from_prev(all_value, prev_avg_value)
+    epoch_output[f'{attribute}']['avg'] = {}
+    epoch_output[f'{attribute}']['avg']['value'] = avg_value
+    epoch_output[f'{attribute}']['avg']['diff_value'] = diff_value
+    epoch_output[f'{attribute}']['avg']['diff_sign'] = diff_sign
+
+    return avg_value
 
 
 def _get_avg_reward_and_advantage(query_results: List[QueryResult]):

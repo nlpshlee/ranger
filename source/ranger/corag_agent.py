@@ -1,7 +1,7 @@
 from _init import *
 
-import re, string, threading, time
-from typing import Optional, List, Dict
+import re, string, threading, collections
+from typing import List, Dict
 from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -13,7 +13,6 @@ from ranger.corag.data_utils import format_documents_for_final_answer, format_in
 from ranger.corag.prompts import get_generate_subquery_prompt, get_generate_intermediate_answer_prompt, get_generate_final_answer_prompt
 from ranger.corag.utils import batch_truncate
 from ranger.corag.data_utils import load_corpus
-from ranger.corag.inference.metrics import compute_em_and_f1
 from ranger.corag.config import Arguments
 
 from ranger.vllm.vllm_agent import VllmAgent
@@ -35,7 +34,7 @@ def _normalize_subquery(subquery: str):
     return subquery
 
 
-def _normalize_answer(text, punc_chars=string.punctuation, punc_repl=""):
+def _normalize_answer(text, punc_chars=string.punctuation, punc_repl="", to_lower=False):
     def remove_articles(s):
         return re.sub(r"\b(a|an|the)\b", " ", s)
 
@@ -46,6 +45,9 @@ def _normalize_answer(text, punc_chars=string.punctuation, punc_repl=""):
     def white_space_fix(s):
         return " ".join(s.split())
 
+    if to_lower:
+        text = text.lower()
+    
     text = replace_punctuation(text)
     text = remove_articles(text)
     text = white_space_fix(text)
@@ -63,7 +65,44 @@ def _compare_answer(final_answer: str, answer: str, txt_option=TXT_OPTION.LOWER|
     return False
 
 
+def _metric_max_over_answers(metric_fn, answers: List[str], predict: str):
+    return max(
+        metric_fn(answer, predict) for answer in answers
+    )
 
+
+def _compute_em(answer: str, predict: str):
+    if answer == predict:
+        return 1
+
+    return 0
+
+
+def _compute_f1(answer: str, predict: str):
+    answer_toks = answer.split()
+    predict_toks = predict.split()
+
+    common = (collections.Counter(answer_toks) & collections.Counter(predict_toks))
+    num_same = sum(common.values())
+
+    if num_same == 0:
+        return 0
+    
+    precision = 1.0 * num_same / len(predict_toks)
+    recall = 1.0 * num_same / len(answer_toks)
+    f1 = (2 * precision * recall) / (precision + recall)
+
+    return f1
+
+
+def _compute_em_and_f1(answers: List[str], predict: str):
+    answers = [_normalize_answer(answer, to_lower=True) for answer in answers]
+    predict = _normalize_answer(predict, to_lower=True)
+
+    em = _metric_max_over_answers(_compute_em, answers, predict)
+    f1 = _metric_max_over_answers(_compute_f1, answers, predict)
+
+    return em, f1
 
 
 class QueryResult:
@@ -71,7 +110,7 @@ class QueryResult:
         self._query_id = ''
         self._query = ''
         self._answer = ''
-        self._chain_results = []
+        self._chain_results: List[ChainResult] = []
         self._doc_ids = []
         self._documents = []
         self._em = -1
@@ -79,13 +118,16 @@ class QueryResult:
     
 
     def compute_metrics(self):
-        if len(self._chain_results) != 1:
-            print(f'\n# [error] QueryResult.compute_metrics() [ len(chain_results) != 1 ], query_id : {self._query_id}\n')
+        all_em, all_f1 = [], []
 
-        temp = compute_em_and_f1([[self._answer]], [self._chain_results[0]._final_answers[-1]])
+        for chain_result in self._chain_results:
+            chain_result.compute_metrics([self._answer])
 
-        self._em = temp['em']
-        self._f1 = temp['f1']
+            all_em.append(chain_result._em)
+            all_f1.append(chain_result._f1)
+        
+        self._em = max(all_em)
+        self._f1 = max(all_f1)
 
 
 class ChainResult:
@@ -101,6 +143,8 @@ class ChainResult:
         self._reward = -1                   # 0 ~ 1
         self._advantage = -1
         self._completion = ''
+        self._em = -1
+        self._f1 = -1
 
 
     def make_get_completion(self, delim='\n'):
@@ -117,6 +161,10 @@ class ChainResult:
         
         self._completion = f'{delim}<chain>' + delim.join(completion_parts) + f'{delim}</chain>'
         return self._completion
+
+
+    def compute_metrics(self, answers: List[str]):
+        self._em, self._f1 = _compute_em_and_f1(answers, self._final_answers[-1])
 
 
     def print_chain(self):
