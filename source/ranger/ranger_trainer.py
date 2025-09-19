@@ -728,7 +728,7 @@ class RANGERTrainer(Trainer):
         for query_idx in range(query_len):
             query_id = ''
             query = ''
-            answer = ''
+            answers = []
             all_chain_results = []
 
             is_same = True
@@ -741,14 +741,14 @@ class RANGERTrainer(Trainer):
                 else:
                     query_id = query_result._query_id
                     query = query_result._query
-                    answer = query_result._answer
+                    answers = query_result._answers
                     all_chain_results.append(query_result._chain_results)
             
             if is_same:
                 write_dict = {}
                 write_dict['query_id'] = query_id
                 write_dict['query'] = query
-                write_dict['answer'] = answer
+                write_dict['answers'] = answers
 
                 epoch_outputs = {}
                 prev_avg_reward, prev_avg_advantage = NULL_FLOAT, NULL_FLOAT

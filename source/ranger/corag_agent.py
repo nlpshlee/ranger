@@ -55,14 +55,18 @@ def _normalize_answer(text, punc_chars=string.punctuation, punc_repl="", to_lowe
     return text
 
 
-def _compare_answer(final_answer: str, answer: str, txt_option=TXT_OPTION.LOWER|TXT_OPTION.RM_SPACE):
-    final_answer = string_util.refine_txt(final_answer, txt_option)
-    answer = string_util.refine_txt(answer, txt_option)
+def _compare_answers(answers: List[str], predict: str, txt_option=TXT_OPTION.LOWER|TXT_OPTION.RM_SPACE):
+    # answers = set([string_util.refine_txt(answer, txt_option) for answer in answers])
+    # predict = string_util.refine_txt(predict, txt_option)
 
-    if final_answer == answer:
-        return True
+    # if predict in answers:
+    #     return True
 
-    return False
+    # return False
+
+    # 아래 코드가 더 효율적인 코드라고 함
+    predict = string_util.refine_txt(predict, txt_option)
+    return any(string_util.refine_txt(answer, txt_option) == predict for answer in answers)
 
 
 def _metric_max_over_answers(metric_fn, answers: List[str], predict: str):
@@ -109,7 +113,7 @@ class QueryResult:
     def __init__(self) -> None:
         self._query_id = ''
         self._query = ''
-        self._answer = ''
+        self._answers = []
         self._chain_results: List[ChainResult] = []
         self._doc_ids = []
         self._documents = []
@@ -121,7 +125,7 @@ class QueryResult:
         all_em, all_f1 = [], []
 
         for chain_result in self._chain_results:
-            chain_result.compute_metrics([self._answer])
+            chain_result.compute_metrics(self._answers)
 
             all_em.append(chain_result._em)
             all_f1.append(chain_result._f1)
@@ -352,7 +356,7 @@ class CoRagAgent:
                     chain_result._log_probs_list.append(log_probs)
                     chain_result._log_likes.append(sum(log_probs) / len(log_probs))
 
-                    if _compare_answer(normalized_final_answer, query_result._answer):
+                    if _compare_answers(query_result._answers, normalized_final_answer):
                         chain_result._is_stop = True
 
                     idx += 1
@@ -391,7 +395,7 @@ class CoRagAgent:
             query_result = QueryResult()
             query_result._query_id = data['query_id']
             query_result._query = data['query']
-            query_result._answer = _normalize_answer(data['answers'][0])
+            query_result._answers = [_normalize_answer(answer) for answer in data['answers']]
             query_result._chain_results = [ChainResult() for _ in range(n_chains)]
             query_results.append(query_result)
         

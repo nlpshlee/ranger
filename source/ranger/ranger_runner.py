@@ -225,8 +225,8 @@ if __name__ == "__main__":
     seed = 42
     set_seed(seed)
 
-    train_data_path = f'{data_dir}/corag/input/multihopqa_train.json'
-    test_data_path = f'{data_dir}/corag/input/multihopqa_valid.json'
+    train_data_path = f'{data_dir}/corag/input/v1/custom_musique_train_5000_final.jsonl'
+    test_data_path = f'{data_dir}/corag/input/v1/custom_multihopqa_eval_1000.jsonl'
     train_datas, test_datas = load_datas(train_data_path, test_data_path, seed, do_print=False)
 
     # model_name = 'meta-llama/Meta-Llama-3-8B-Instruct'
