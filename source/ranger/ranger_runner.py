@@ -5,6 +5,7 @@ import argparse, random, torch, wandb, unsloth
 from ranger.modules import common_util, json_util
 from ranger.chain_generator import ChainGenerator
 from ranger.reward_calculator import RewardCalculator
+from ranger.reward.models.reward_model import RewardOption
 from ranger.ranger_trainer import RANGERTrainer
 
 '''
@@ -141,14 +142,22 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         'top_k_query': 20,                          # main query 검색 문서 수
         'top_k_sub_query': 5,                       # sub query  검색 문서 수
         'temperature': 0.7,                         # 체인이 다양하게 생성되어야 하기 때문에, 높은 값 할당
+        'n_logprob': 100,                           # 정답에 대한 모델의 confidence 계산 시에 확인하려는 상위 N개의 토큰 수
         "task_desc": "answer multi-hop questions"
     }
 
     chain_generator = ChainGenerator(vllm_config, USE_GPU_IDS)
 
     # 2. RewardCalculator 생성
-    reward_model_params_path = f'{data_dir}/reward/classifier_parmas_v2.json'
-    reward_calculator = RewardCalculator(reward_model_params_path, USE_GPU_IDS)
+    reward_config = {
+        "model_name": model_name,                   # ChainGenerator(VllmEngine)과 동일한 토크나이저 사용을 위함
+        'reward_option': RewardOption.ALL,
+        'penalty_short': 0.2,
+        'penalty_long': 0.3,
+        'penalty_missing_prob': 1e-9                # 정답 토큰이 상위 N개 토큰에 없는 경우의 패널티 확률 (내부적으론 log로 변환해서 사용됨)
+    }
+
+    reward_calculator = RewardCalculator(reward_config, USE_GPU_IDS)
 
     # 3. RangerTrainer 생성
     model_config = {

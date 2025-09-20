@@ -12,7 +12,9 @@ from ranger.vllm.vllm_agent import VllmAgent
 
 
 class VllmEngine(VllmAgent):
-    def __init__(self, model_name: str, device: str, gpu_memory_utilization: float, dtype: str, max_model_len: int):
+    def __init__(self, model_name: str, device: str, gpu_memory_utilization: float, dtype: str,
+                 max_model_len: int, n_logprob: int):
+
         super().__init__()
 
         self._model_name = model_name
@@ -20,6 +22,7 @@ class VllmEngine(VllmAgent):
         self._gpu_memory_utilization = gpu_memory_utilization
         self._dtype = dtype
         self._max_model_len = max_model_len
+        self._n_logprob = n_logprob
 
         '''
             - max_loras
@@ -62,7 +65,7 @@ class VllmEngine(VllmAgent):
             toks.append(tok)
             log_probs.append(log_prob)
 
-        return toks, log_probs
+        return toks, log_probs, completion.logprobs
 
 
     def _make_generate_result(self, completion: CompletionOutput, return_toks_log_probs: bool, do_print: bool) -> Union[str, Tuple[str, Any]]:
@@ -71,8 +74,8 @@ class VllmEngine(VllmAgent):
         if not return_toks_log_probs:
             return generated_text
         else:
-            toks, log_probs = self._get_generated_toks_log_probs(completion)
-            return generated_text, (toks, log_probs)
+            toks, log_probs, all_log_probs = self._get_generated_toks_log_probs(completion)
+            return generated_text, (toks, log_probs, all_log_probs)
 
 
     def generate_batch(self, messages: List[List[Dict]], max_token_gen: int, temperature: int,
@@ -87,7 +90,7 @@ class VllmEngine(VllmAgent):
         sampling_params = SamplingParams(
             max_tokens=max_token_gen,
             temperature=temperature,
-            logprobs=1 if return_toks_log_probs else None
+            logprobs=self._n_logprob if return_toks_log_probs else None
         )
 
         # LoRA Adapter 추가 코드

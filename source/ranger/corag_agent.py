@@ -1,7 +1,7 @@
 from _init import *
 
 import re, string, threading, collections
-from typing import List, Dict
+from typing import List, Dict, Set
 from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -34,7 +34,7 @@ def _normalize_subquery(subquery: str):
     return subquery
 
 
-def _normalize_answer(text, punc_chars=string.punctuation, punc_repl="", to_lower=False):
+def _normalize_answer(text, punc_chars=string.punctuation, punc_repl="", to_lower=True):
     def remove_articles(s):
         return re.sub(r"\b(a|an|the)\b", " ", s)
 
@@ -55,18 +55,8 @@ def _normalize_answer(text, punc_chars=string.punctuation, punc_repl="", to_lowe
     return text
 
 
-def _compare_answers(answers: List[str], predict: str, txt_option=TXT_OPTION.LOWER|TXT_OPTION.RM_SPACE):
-    # answers = set([string_util.refine_txt(answer, txt_option) for answer in answers])
-    # predict = string_util.refine_txt(predict, txt_option)
-
-    # if predict in answers:
-    #     return True
-
-    # return False
-
-    # 아래 코드가 더 효율적인 코드라고 함
-    predict = string_util.refine_txt(predict, txt_option)
-    return any(string_util.refine_txt(answer, txt_option) == predict for answer in answers)
+def _compare_answers(answer_set: Set[str], predict: str):
+    return predict in answer_set
 
 
 def _metric_max_over_answers(metric_fn, answers: List[str], predict: str):
@@ -75,10 +65,10 @@ def _metric_max_over_answers(metric_fn, answers: List[str], predict: str):
     )
 
 
-def _compute_em(answer: str, predict: str):
-    if answer == predict:
+def _compute_em(answer_set: Set[str], predict: str):
+    if predict in answer_set:
         return 1
-
+    
     return 0
 
 
@@ -99,11 +89,14 @@ def _compute_f1(answer: str, predict: str):
     return f1
 
 
-def _compute_em_and_f1(answers: List[str], predict: str):
-    answers = [_normalize_answer(answer, to_lower=True) for answer in answers]
-    predict = _normalize_answer(predict, to_lower=True)
-
-    em = _metric_max_over_answers(_compute_em, answers, predict)
+'''
+    answers, predict 모두 _normalize_answer(to_lower=True) 수행되어 있음
+    
+        - answer_set은 원래는 공백까지 제거하여 초기화 하고, predict도 공백 제거해서 검사하는 로직이었는데
+            - 일단은, answers를 그대로 set으로 변환한 상태 (속도 때문에 여기 저기 최적화 하는 중..)
+'''
+def _compute_em_and_f1(answers: List[str], answer_set: Set[str], predict: str):
+    em = _compute_em(answer_set, predict)
     f1 = _metric_max_over_answers(_compute_f1, answers, predict)
 
     return em, f1
@@ -113,7 +106,9 @@ class QueryResult:
     def __init__(self) -> None:
         self._query_id = ''
         self._query = ''
-        self._answers = []
+        self._answers = List[str]
+        self._answer_set: Set[str]
+        self._hop = -1
         self._chain_results: List[ChainResult] = []
         self._doc_ids = []
         self._documents = []
@@ -125,7 +120,7 @@ class QueryResult:
         all_em, all_f1 = [], []
 
         for chain_result in self._chain_results:
-            chain_result.compute_metrics(self._answers)
+            chain_result.compute_metrics(self._answers, self._answer_set)
 
             all_em.append(chain_result._em)
             all_f1.append(chain_result._f1)
@@ -142,6 +137,7 @@ class ChainResult:
         self._documents_list = []           # 2차원 배열
         self._final_answers = []
         self._log_probs_list = []           # 2차원 배열
+        self._all_log_probs_list = []       # 2차원 배열
         self._log_likes = []
         self._is_stop = False
         self._reward = -1                   # 0 ~ 1
@@ -167,8 +163,8 @@ class ChainResult:
         return self._completion
 
 
-    def compute_metrics(self, answers: List[str]):
-        self._em, self._f1 = _compute_em_and_f1(answers, self._final_answers[-1])
+    def compute_metrics(self, answers: List[str], answer_set: Set[str]):
+        self._em, self._f1 = _compute_em_and_f1(answers, answer_set, self._final_answers[-1])
 
 
     def print_chain(self):
@@ -350,10 +346,11 @@ class CoRagAgent:
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    final_answer, (toks, log_probs) = final_answer_tok_log_probs_list[idx]
+                    final_answer, (toks, log_probs, all_log_probs) = final_answer_tok_log_probs_list[idx]
                     normalized_final_answer = _normalize_answer(final_answer)
                     chain_result._final_answers.append(normalized_final_answer)
                     chain_result._log_probs_list.append(log_probs)
+                    chain_result._all_log_probs_list.append(all_log_probs)
                     chain_result._log_likes.append(sum(log_probs) / len(log_probs))
 
                     if _compare_answers(query_result._answers, normalized_final_answer):
@@ -396,6 +393,8 @@ class CoRagAgent:
             query_result._query_id = data['query_id']
             query_result._query = data['query']
             query_result._answers = [_normalize_answer(answer) for answer in data['answers']]
+            query_result._answer_set = set(query_result._answers)
+            query_result._hop = data['hop'] if 'hop' in data.keys() else -1
             query_result._chain_results = [ChainResult() for _ in range(n_chains)]
             query_results.append(query_result)
         

@@ -114,7 +114,8 @@ class ChainGenerator:
                 device=self._vllm_config['device'],
                 gpu_memory_utilization=self._vllm_config['gpu_memory_utilization'],
                 dtype=self._vllm_config['dtype'],
-                max_model_len=self._vllm_config['max_model_len']
+                max_model_len=self._vllm_config['max_model_len'],
+                n_logprob=self._vllm_config['n_logprob']
             )
             print(f'\n# ChainGenerator._init_agents() vllm_agent is [VllmEngine]. vllm_config : {self._vllm_config}\n')
 
