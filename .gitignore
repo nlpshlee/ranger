@@ -4,7 +4,8 @@ __pycache__
 .DS_Store
 *.gz
 elasticsearch-7.10.1
-data
+data/corag/input/v0
+data/reward
 logs
 output*
 wandb

@@ -135,14 +135,14 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     vllm_config = {
         "model_name": model_name,
         'device': f'cuda:{cg_device}',
-        'gpu_memory_utilization': 0.30,
+        'gpu_memory_utilization': 0.40,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
         'top_k_query': 20,                          # main query 검색 문서 수
         'top_k_sub_query': 5,                       # sub query  검색 문서 수
         'temperature': 0.7,                         # 체인이 다양하게 생성되어야 하기 때문에, 높은 값 할당
-        'n_logprob': 100,                           # 정답에 대한 모델의 confidence 계산 시에 확인하려는 상위 N개의 토큰 수
+        'n_logprob': 20,                            # 정답에 대한 모델의 confidence 계산 시에 확인하려는 상위 N개의 토큰 수 (최대 20까지만 가능)
         "task_desc": "answer multi-hop questions"
     }
 
@@ -150,11 +150,10 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
 
     # 2. RewardCalculator 생성
     reward_config = {
-        "model_name": model_name,                   # ChainGenerator(VllmEngine)과 동일한 토크나이저 사용을 위함
         'reward_option': RewardOption.ALL,
         'penalty_short': 0.2,
         'penalty_long': 0.3,
-        'penalty_missing_prob': 1e-9                # 정답 토큰이 상위 N개 토큰에 없는 경우의 패널티 확률 (내부적으론 log로 변환해서 사용됨)
+        'missing_prob': 0.001                       # 정답 토큰이 상위 N개 토큰에 없는 경우의 패널티 확률 (내부적으론 log로 변환해서 사용됨)
     }
 
     reward_calculator = RewardCalculator(reward_config, USE_GPU_IDS)
@@ -163,7 +162,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     model_config = {
         "model_name": model_name,
         'device': f'cuda:{rt_device}',
-        'gpu_memory_utilization': 0.30,
+        'gpu_memory_utilization': 0.40,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
@@ -176,8 +175,8 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     }
 
     grpo_config = {
-        'gradient_accumulation_steps': 3,           # Gradient Accumulation (실제 loss가 반영되는 가상의 배치 사이즈)
-        'learning_rate': 1e-6,                       # learning rate for `AdamW` optimizer
+        'gradient_accumulation_steps': 20,           # Gradient Accumulation (실제 loss가 반영되는 가상의 배치 사이즈)
+        'learning_rate': 1e-5,                       # learning rate for `AdamW` optimizer
         'epsilon': 0.2,                              # CLIP epsilon
         'beta': 0.04                                 # KL coefficient
     }
@@ -193,11 +192,11 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         - batch_size 는 '1'로 고정하고, 'Accelerate'를 이용하여 'Gradient Accumulation' 적용
             - batch_size 를 키우면, OOM 발생
     '''
-    epochs, batch_size, n_chains, chain_depth = 3, 1, 5, 5
+    epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
 
     wandb.init(
         # project=f'RANGER-GRPO-Training [{common_util.get_datetime_now("%Y%m%d %H %M %S")}]',
-        project=f'RANGER-GRPO-Training-1',
+        project=f'RANGER-GRPO-Training-250921-2',
         config={
             'model_name': model_name,
             'max_model_len': max_model_len,
@@ -217,7 +216,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     )
 
     print(f'\n# ranger_runner.run_base() start datetime : {common_util.get_datetime_now()}\n')
-    ranger_trainer.train(train_datas[:10], test_datas[:5], epochs, batch_size, n_chains, chain_depth)
+    ranger_trainer.train(train_datas[:100], test_datas[:10], epochs, batch_size, n_chains, chain_depth)
     print(f'\n# ranger_runner.run_base() end datetime : {common_util.get_datetime_now()}\n')
 
 

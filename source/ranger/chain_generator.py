@@ -5,8 +5,6 @@ from typing import List
 from datasets import load_dataset
 
 from ranger.modules import common_util, container_util, json_util
-from ranger.vllm.vllm_agent import VllmAgent
-from ranger.vllm.vllm_client import VllmClient
 from ranger.vllm.vllm_engine import VllmEngine
 from ranger.corag_agent import QueryResult, ChainResult, CoRagAgent
 
@@ -88,43 +86,33 @@ class ChainGenerator:
         self._vllm_config = vllm_config
         self._use_gpu_ids = use_gpu_ids
 
-        self._vllm_agent: VllmAgent = None
+        self._vllm_engine: VllmEngine = None
         self._corag_agent: CoRagAgent = None
         self._chain_generate_time = ChainGenerateTime()
 
-        self._init_agents()
+        self._init_modules()
         common_util.check_gpu_memory(self._use_gpu_ids, '[Chain Generator Init]')
 
 
-    def _init_agents(self):
-        # 서버 통신용
-        if all(key in self._vllm_config for key in ['model_name', 'host', 'port', 'api_key']):
-            self._vllm_agent = VllmClient(
-                model_name=self._vllm_config['model_name'],
-                host=self._vllm_config['host'],
-                port=self._vllm_config['port'],
-                api_key=self._vllm_config['api_key']
-            )
-            print(f'\n# ChainGenerator._init_agents() vllm_agent is [VllmClient]. vllm_config : {self._vllm_config}\n')
+    def _init_modules(self):
+        '''
+            - 기존 서버 통신용 VllmClient는 제거하기로 함
+                - 엔진하고 클라이언트를 계속 함께 관리해야 하는데, 각 클래스 마다 사용되는 객체도 다르고, 앞으로는 엔진만 사용할 것 같긴 함
+        '''
+        self._vllm_engine = VllmEngine(
+            model_name=self._vllm_config['model_name'],
+            device=self._vllm_config['device'],
+            gpu_memory_utilization=self._vllm_config['gpu_memory_utilization'],
+            dtype=self._vllm_config['dtype'],
+            max_model_len=self._vllm_config['max_model_len'],
+            n_logprob=self._vllm_config['n_logprob']
+        )
 
-        # 내부 엔진용
-        elif all(key in self._vllm_config for key in ['model_name', 'device', 'gpu_memory_utilization', 'dtype']):
-            self._vllm_agent = VllmEngine(
-                model_name=self._vllm_config['model_name'],
-                device=self._vllm_config['device'],
-                gpu_memory_utilization=self._vllm_config['gpu_memory_utilization'],
-                dtype=self._vllm_config['dtype'],
-                max_model_len=self._vllm_config['max_model_len'],
-                n_logprob=self._vllm_config['n_logprob']
-            )
-            print(f'\n# ChainGenerator._init_agents() vllm_agent is [VllmEngine]. vllm_config : {self._vllm_config}\n')
+        print(f'\n# ChainGenerator._init_modules() vllm_agent is [VllmEngine]. vllm_config : {self._vllm_config}\n')
 
-        else:
-            print(f'\n# ChainGenerator._init_agents() vllm_config error : {self._vllm_config}\n')
-
-        if self._vllm_agent is not None:
+        if self._vllm_engine is not None:
             self._corag_agent = CoRagAgent(
-                self._vllm_agent,
+                self._vllm_engine,
                 self._vllm_config['max_model_len'],
                 self._vllm_config['max_token_gen'],
                 self._vllm_config['temperature'],
@@ -160,7 +148,7 @@ class ChainGenerator:
 
             self._chain_generate_time.check_time(
                 len(datas_batch) * n_chains,
-                self._corag_agent._vllm_agent._called_cnt
+                self._corag_agent._vllm_engine._called_cnt
             )
 
             if do_print:

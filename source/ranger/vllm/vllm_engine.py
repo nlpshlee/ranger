@@ -1,5 +1,6 @@
 from _init import *
 
+import math
 from typing import List, Dict, Union, Tuple, Any
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -8,14 +9,10 @@ from vllm.outputs import RequestOutput, CompletionOutput
 from vllm.sequence import Logprob
 from vllm.lora.request import LoRARequest
 
-from ranger.vllm.vllm_agent import VllmAgent
 
-
-class VllmEngine(VllmAgent):
+class VllmEngine:
     def __init__(self, model_name: str, device: str, gpu_memory_utilization: float, dtype: str,
                  max_model_len: int, n_logprob: int):
-
-        super().__init__()
 
         self._model_name = model_name
         self._device = device
@@ -23,6 +20,9 @@ class VllmEngine(VllmAgent):
         self._dtype = dtype
         self._max_model_len = max_model_len
         self._n_logprob = n_logprob
+
+        self._called_cnt = 0
+        self._called_cnt_all = 0
 
         '''
             - max_loras
@@ -42,44 +42,70 @@ class VllmEngine(VllmAgent):
             # max_loras=1
         )
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._model_name)
-        
+        self._tok_id_end = self._tokenizer.eos_token_id
+    
+
+    def reset(self):
         self._called_cnt = 0
-        self._called_cnt_all = 0
 
 
-    def _get_generated_text(self, completion: CompletionOutput) -> str:
-        return completion.text.strip()
+    def _get_generated_text(self, completion_output: CompletionOutput) -> str:
+        return completion_output.text.strip()
+    
 
+    def get_generated_log_like(self, completion_output: CompletionOutput, text='', tok_ids=[], missing_log_prob=math.log(1e-9), return_all=False):
+        # 'text'가 주어지면, 'text'를 토크나이징하고 likelihood 계산
+        if len(text) > 0:
+            tok_ids: list = self._tokenizer(text, add_special_tokens=False)['input_ids']
+        # 'text'도 주어지지 않고, 'tok_ids'도 주어지지 않으면, 'completion_output'에 내장되어 있는 'tok_ids' 사용
+        elif len(tok_ids) == 0:
+            tok_ids: list = completion_output.token_ids
+        
+        if tok_ids[-1] != self._tok_id_end:
+            tok_ids.append(self._tok_id_end)
 
-    def _get_generated_toks_log_probs(self, completion: CompletionOutput) -> Tuple[List, List]:
-        toks, log_probs = [], []
+        log_probs = []
+        completion_output_log_prob_len = len(completion_output.logprobs)
 
-        for i, tok_id in enumerate(completion.token_ids):
-            tok = self._tokenizer.decode(tok_id).strip()
-            if len(tok) == 0:
+        for tok_idx in range(len(tok_ids)):
+            tok_id = tok_ids[tok_idx]
+
+            # 모델이 생성한 텍스트보다 정답이 더 긴 경우
+            if completion_output_log_prob_len <= tok_idx:
+                log_probs.append(missing_log_prob)
                 continue
 
-            log_prob_temp: Logprob = completion.logprobs[i][tok_id]
-            log_prob = log_prob_temp.logprob
+            # 'tok_idx'번째 위치에서의 전체 토큰 확률 분포 (실제로는 top-k)
+            all_tok_log_prob = completion_output.logprobs[tok_idx]
 
-            toks.append(tok)
+            if tok_id in all_tok_log_prob.keys():
+                log_prob: Logprob = all_tok_log_prob[tok_id]
+                log_prob = log_prob.logprob
+            else:
+                log_prob = missing_log_prob
+            
             log_probs.append(log_prob)
+        
+        log_like = sum(log_probs) / len(log_probs)
 
-        return toks, log_probs, completion.logprobs
+        if return_all:
+            toks = [self._tokenizer.decode(tok_id) for tok_id in tok_ids]
+            return log_like, toks, tok_ids, log_probs
+        else:
+            return log_like
 
 
-    def _make_generate_result(self, completion: CompletionOutput, return_toks_log_probs: bool, do_print: bool) -> Union[str, Tuple[str, Any]]:
-        generated_text = self._get_generated_text(completion)
+    def _make_generate_result(self, completion_output: CompletionOutput, return_completion_output: bool) -> Union[str, Tuple[str, Any]]:
+        generated_text = self._get_generated_text(completion_output)
 
-        if not return_toks_log_probs:
+        if not return_completion_output:
             return generated_text
         else:
-            toks, log_probs, all_log_probs = self._get_generated_toks_log_probs(completion)
-            return generated_text, (toks, log_probs, all_log_probs)
+            return generated_text, completion_output
 
 
     def generate_batch(self, messages: List[List[Dict]], max_token_gen: int, temperature: int,
-                       return_toks_log_probs=False, adapter_path='', do_print=True) -> List[Union[str, Tuple[str, Any]]]:
+                       return_completion_output=False, adapter_path='', do_print=True) -> List[Union[str, Tuple[str, Any]]]:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
@@ -90,7 +116,7 @@ class VllmEngine(VllmAgent):
         sampling_params = SamplingParams(
             max_tokens=max_token_gen,
             temperature=temperature,
-            logprobs=self._n_logprob if return_toks_log_probs else None
+            logprobs=self._n_logprob if return_completion_output else None
         )
 
         # LoRA Adapter 추가 코드
@@ -115,8 +141,8 @@ class VllmEngine(VllmAgent):
 
         results = []
         for req_output in req_outputs:
-            completion: CompletionOutput = req_output.outputs[0]
-            results.append(self._make_generate_result(completion, return_toks_log_probs, do_print))
+            completion_output: CompletionOutput = req_output.outputs[0]
+            results.append(self._make_generate_result(completion_output, return_completion_output))
         
         self._called_cnt += 1
         self._called_cnt_all += 1

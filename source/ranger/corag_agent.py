@@ -1,12 +1,12 @@
 from _init import *
 
-import re, string, threading, collections
-from typing import List, Dict, Set
+import re, string, threading, collections, math
+from typing import List, Dict, Set, Union
 from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from ranger.modules.common_const import *
-from ranger.modules import string_util, common_util
+from ranger.modules import common_util
 
 from ranger.corag.search.search_utils import search_by_http
 from ranger.corag.data_utils import format_documents_for_final_answer, format_input_context
@@ -15,7 +15,7 @@ from ranger.corag.utils import batch_truncate
 from ranger.corag.data_utils import load_corpus
 from ranger.corag.config import Arguments
 
-from ranger.vllm.vllm_agent import VllmAgent
+from ranger.vllm.vllm_engine import VllmEngine
 
 
 IS_TEST = False
@@ -59,7 +59,7 @@ def _compare_answers(answer_set: Set[str], predict: str):
     return predict in answer_set
 
 
-def _metric_max_over_answers(metric_fn, answers: List[str], predict: str):
+def _metric_max_over_answers(metric_fn, answers: Union[List[str], Set[str]], predict: str):
     return max(
         metric_fn(answer, predict) for answer in answers
     )
@@ -90,14 +90,14 @@ def _compute_f1(answer: str, predict: str):
 
 
 '''
-    answers, predict 모두 _normalize_answer(to_lower=True) 수행되어 있음
+    answer_set, predict 모두 _normalize_answer(to_lower=True) 수행되어 있음
     
         - answer_set은 원래는 공백까지 제거하여 초기화 하고, predict도 공백 제거해서 검사하는 로직이었는데
             - 일단은, answers를 그대로 set으로 변환한 상태 (속도 때문에 여기 저기 최적화 하는 중..)
 '''
-def _compute_em_and_f1(answers: List[str], answer_set: Set[str], predict: str):
+def _compute_em_and_f1(answer_set: Set[str], predict: str):
     em = _compute_em(answer_set, predict)
-    f1 = _metric_max_over_answers(_compute_f1, answers, predict)
+    f1 = _metric_max_over_answers(_compute_f1, answer_set, predict)
 
     return em, f1
 
@@ -120,7 +120,7 @@ class QueryResult:
         all_em, all_f1 = [], []
 
         for chain_result in self._chain_results:
-            chain_result.compute_metrics(self._answers, self._answer_set)
+            chain_result.compute_metrics(self._answer_set)
 
             all_em.append(chain_result._em)
             all_f1.append(chain_result._f1)
@@ -136,8 +136,7 @@ class ChainResult:
         self._doc_ids_list = []             # 2차원 배열
         self._documents_list = []           # 2차원 배열
         self._final_answers = []
-        self._log_probs_list = []           # 2차원 배열
-        self._all_log_probs_list = []       # 2차원 배열
+        self._completion_outputs = []
         self._log_likes = []
         self._is_stop = False
         self._reward = -1                   # 0 ~ 1
@@ -163,8 +162,8 @@ class ChainResult:
         return self._completion
 
 
-    def compute_metrics(self, answers: List[str], answer_set: Set[str]):
-        self._em, self._f1 = _compute_em_and_f1(answers, answer_set, self._final_answers[-1])
+    def compute_metrics(self, answer_set: Set[str]):
+        self._em, self._f1 = _compute_em_and_f1(answer_set, self._final_answers[-1])
 
 
     def print_chain(self):
@@ -183,16 +182,16 @@ class ChainResult:
 
 class CoRagAgent:
     def __init__(self,
-                 vllm_agent: VllmAgent, max_model_len: int, max_token_gen: int, temperature: float,
+                 vllm_engine: VllmEngine, max_model_len: int, max_token_gen: int, temperature: float,
                  top_k_query: int, top_k_sub_query: int,
                  corpus: Dataset=load_corpus()):
 
-        self._vllm_agent = vllm_agent
+        self._vllm_engine = vllm_engine
         self._corpus = corpus # 검색 대상 문서
 
         self._corag_args = Arguments()
 
-        self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._vllm_agent._model_name)
+        self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._vllm_engine._model_name)
         self._lock = threading.Lock()
 
         self._task_desc: str
@@ -208,7 +207,7 @@ class CoRagAgent:
 
     def reset(self):
         self._batch_idx = 0
-        self._vllm_agent.reset()
+        self._vllm_engine.reset()
 
 
     def _truncate_long_messages(self, messages: List[Dict]):
@@ -240,11 +239,11 @@ class CoRagAgent:
                     inputs.append(sub_query_prompt)
         
         # VLLM을 통해 서브쿼리 생성
-        sub_querys = self._vllm_agent.generate_batch(
+        sub_querys = self._vllm_engine.generate_batch(
             messages=inputs,
             max_token_gen=self._max_token_gen,
             temperature=self._temperature,
-            return_toks_log_probs=False,
+            return_completion_output=False,
             adapter_path=self._adapter_path
         )
 
@@ -284,11 +283,11 @@ class CoRagAgent:
                     self._truncate_long_messages(sub_answer_prompt)
                     inputs.append(sub_answer_prompt)
 
-        sub_answers = self._vllm_agent.generate_batch(
+        sub_answers = self._vllm_engine.generate_batch(
             messages=inputs,
             max_token_gen=self._max_token_gen,
             temperature=self._temperature,
-            return_toks_log_probs=False,
+            return_completion_output=False,
             adapter_path=self._adapter_path
         )
         
@@ -334,11 +333,11 @@ class CoRagAgent:
                     self._truncate_long_messages(final_answer_prompt)
                     inputs.append(final_answer_prompt)
         
-        final_answer_tok_log_probs_list = self._vllm_agent.generate_batch(
+        final_answer_completion_output_list = self._vllm_engine.generate_batch(
             messages=inputs,
             max_token_gen=self._max_token_gen,
             temperature=0.0,
-            return_toks_log_probs=True,
+            return_completion_output=True,
             adapter_path=self._adapter_path
         )
 
@@ -346,12 +345,11 @@ class CoRagAgent:
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    final_answer, (toks, log_probs, all_log_probs) = final_answer_tok_log_probs_list[idx]
+                    final_answer, completion_output = final_answer_completion_output_list[idx]
                     normalized_final_answer = _normalize_answer(final_answer)
                     chain_result._final_answers.append(normalized_final_answer)
-                    chain_result._log_probs_list.append(log_probs)
-                    chain_result._all_log_probs_list.append(all_log_probs)
-                    chain_result._log_likes.append(sum(log_probs) / len(log_probs))
+                    chain_result._completion_outputs.append(completion_output)
+                    chain_result._log_likes.append(self._vllm_engine.get_generated_log_like(completion_output))
 
                     if _compare_answers(query_result._answers, normalized_final_answer):
                         chain_result._is_stop = True
@@ -361,9 +359,11 @@ class CoRagAgent:
                     if IS_TEST:
                         print(f'\nfinal_answer : {normalized_final_answer}')
 
-                        import math
-                        for tok, log_prob in zip(toks, log_probs):
-                            print(f'\ttok : {tok}, prob : {math.exp(log_prob)}')
+                        log_like, toks, tok_ids, log_probs = self._vllm_engine.get_generated_log_like(completion_output, return_all=True)
+                        print(f'\tlog_likelihood : {log_like}')
+
+                        for tok, tok_id, log_prob in zip(toks, tok_ids, log_probs):
+                            print(f'\ttok : {tok}, id : {tok_id}, prob : {math.exp(log_prob)}')
                         print()
 
 
@@ -392,8 +392,8 @@ class CoRagAgent:
             query_result = QueryResult()
             query_result._query_id = data['query_id']
             query_result._query = data['query']
-            query_result._answers = [_normalize_answer(answer) for answer in data['answers']]
-            query_result._answer_set = set(query_result._answers)
+            query_result._answers = [_normalize_answer(answer, to_lower=False) for answer in data['answers']]
+            query_result._answer_set = set([answer.lower() for answer in query_result._answers])
             query_result._hop = data['hop'] if 'hop' in data.keys() else -1
             query_result._chain_results = [ChainResult() for _ in range(n_chains)]
             query_results.append(query_result)

@@ -573,7 +573,7 @@ class RANGERTrainer(Trainer):
                                                                                         self._adapter_path)[0]
 
                 # 2. 체인 별 리워드 계산
-                self._reward_calculator.calculate_reward(query_results)
+                self._reward_calculator.calculate_reward(query_results, self._chain_generator._vllm_engine)
 
                 # 3. GRPO Advantage 계산 : 쿼리 별로 모든 체인에 대하여, Advantage 계산
                 for query_result in query_results:
@@ -665,7 +665,7 @@ class RANGERTrainer(Trainer):
                                                                                         self._adapter_path)[0]
                 
                 # 2. 체인 별 리워드 계산
-                self._reward_calculator.calculate_reward(query_results)
+                self._reward_calculator.calculate_reward(query_results, self._chain_generator._vllm_engine)
 
                  # 3. GRPO Advantage 계산
                 for query_result in query_results:
@@ -676,8 +676,8 @@ class RANGERTrainer(Trainer):
                     for chain_result in chain_results:
                         chain_result.make_get_completion()
                 
-                    # 5. 성능 측정
-                    query_result.compute_metrics()
+                    # 5. 성능 측정 (리워드 계산할 때, 호출됨)
+                    # query_result.compute_metrics()
 
                 all_query_results.extend(query_results)
         

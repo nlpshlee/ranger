@@ -5,6 +5,7 @@ from typing import List
 from ranger.modules import common_util
 from ranger.reward.models.reward_model import RewardModel
 from ranger.corag_agent import QueryResult, ChainResult
+from ranger.vllm.vllm_engine import VllmEngine
 
 
 class RewardCalculator:
@@ -19,15 +20,14 @@ class RewardCalculator:
     def _set_config_and_init_model(self, reward_config: dict):
         self._reward_option = reward_config['reward_option']
 
-        self._reward_model = RewardModel(reward_config['model_name'],
-                                         reward_config['penalty_short'],
+        self._reward_model = RewardModel(reward_config['penalty_short'],
                                          reward_config['penalty_long'],
-                                         reward_config['penalty_missing_prob'])
+                                         reward_config['missing_prob'])
 
         common_util.check_gpu_memory(self._use_gpu_ids, '[Reward Calculator Init]')
 
 
-    def calculate_reward(self, query_results: List[QueryResult]):
+    def calculate_reward(self, query_results: List[QueryResult], vllm_engine: VllmEngine):
         for query_result in query_results:
             query_result.compute_metrics()
             chain_results: List[ChainResult] = query_result._chain_results
@@ -36,7 +36,8 @@ class RewardCalculator:
                 reward = self._reward_model.calculate_chain_reward(self._reward_option,
                                                                    query_result._answers,
                                                                    query_result._hop,
-                                                                   chain_result)
+                                                                   chain_result,
+                                                                   vllm_engine)
 
                 chain_result._reward = reward
 
