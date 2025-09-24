@@ -165,6 +165,9 @@ class RANGERTrainer(Trainer):
         if self.accelerator.is_main_process:
             unwrapped_model = self.accelerator.unwrap_model(self.model)
             unwrapped_model.save_pretrained(self._adapter_path)
+            print(f'# RANGERTrainer._save_adapter_for_vllm() [ {common_util.get_datetime_now()} ] saved : {self._adapter_path}\n')
+        else:
+            print(f'# RANGERTrainer._save_adapter_for_vllm() don\'t save : not accelerator.is_main_process')
 
         self.accelerator.wait_for_everyone()
         common_util.check_gpu_memory(self._use_gpu_ids, '[adapter saved]')
@@ -599,6 +602,7 @@ class RANGERTrainer(Trainer):
                     self.optimizer.step()
                     self.optimizer.zero_grad() # 누적된 gradient 를 한 번에 반영해야 하므로, 먼저 step() 호출하고 다음에 zero_grad() 호출
                     print(f'\n# RANGERTrainer.train() [ {epoch} epoch - {batch_idx+1} batch ] : sync gradients (accelerator)')
+                    common_util.check_gpu_memory(self._use_gpu_ids, f'[ {epoch} epoch - {batch_idx+1} batch ]', do_torch_clear=True)
 
                 print(f'\n# RANGERTrainer.train() all_batch_loss[-10:] : {all_batch_loss[-10:]}')
                 print(f'# RANGERTrainer.train() sum_batch_loss : {sum(all_batch_loss)}')
@@ -680,6 +684,9 @@ class RANGERTrainer(Trainer):
                     # query_result.compute_metrics()
 
                 all_query_results.extend(query_results)
+
+                if (batch_idx+1) % self._gradient_accumulation_steps == 0:
+                    common_util.check_gpu_memory(self._use_gpu_ids, f'{prefix} - [ {batch_idx+1} batch ]', do_torch_clear=True)
         
         # 6. wandb 로깅
         self._wandb_logging_evaluate(prefix_org, epoch, all_query_results)

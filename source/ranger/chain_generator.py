@@ -51,10 +51,10 @@ class ChainGenerateTime:
             self._prev_time = self._cur_time
         
         if called_cnt > 0:
-            vllm_called_cnt_size = len(self._vllm_called_cnts)
-            if vllm_called_cnt_size > 0:
-                called_cnt = called_cnt - self._vllm_called_cnts[vllm_called_cnt_size-1]
-            self._vllm_called_cnts.append(called_cnt)
+            if len(self._vllm_called_cnts) == 0:
+                self._vllm_called_cnts.append(called_cnt)
+            else:
+                self._vllm_called_cnts.append(called_cnt - sum(self._vllm_called_cnts))
 
 
     def print_time(self, print_num=5):
@@ -127,14 +127,14 @@ class ChainGenerator:
 
 
     def chain_generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', do_print=False):
-        print(f'\n# ChainGenerator.chain_generate() [start] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+        # print(f'\n# ChainGenerator.chain_generate() [start] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         results = []
         data_size = len(datas)
 
         for i, datas_batch in enumerate(container_util.chunks(datas, batch_size)):
-            start = i*batch_size
-            end = min((i+1)*batch_size-1, data_size-1)
-            print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({start} ~ {end})\n')
+            # start = i*batch_size
+            # end = min((i+1)*batch_size-1, data_size-1)
+            # print(f'# ChainGenerator.chain_generate() batch {i+1} : datas size : {len(datas_batch)}({start} ~ {end})\n')
 
             self._chain_generate_time.check_time()
 
@@ -164,7 +164,7 @@ class ChainGenerator:
             results.append(query_results)
         
         # 체인 생성 경과 시간 출력
-        print(f'\n# ChainGenerator.chain_generate() [end] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
+        # print(f'\n# ChainGenerator.chain_generate() [end] data_size : {len(datas)}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}\n')
         self._chain_generate_time.print_time()
 
         return results

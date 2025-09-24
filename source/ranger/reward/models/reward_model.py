@@ -77,24 +77,27 @@ class RewardModel():
     def _calculate_confidence(self, answers: List[str], chain_result: ChainResult, vllm_engine: VllmEngine, alpha=0.5):
         chain_len = len(chain_result._sub_querys)
 
-        answer_log_likes_by_step = []
-        for i in range(chain_len):
-            completion_output = chain_result._completion_outputs[i]
+        if answers is None:
+            log_likes_by_step = chain_result._log_likes
+        else:
+            log_likes_by_step = []
+            for i in range(chain_len):
+                completion_output = chain_result._completion_outputs[i]
 
-            answer_log_likes_by_step.append(
-                max(
-                    [vllm_engine.get_generated_log_like(completion_output, answer, missing_log_prob=self._missing_log_prob) for answer in answers]
+                log_likes_by_step.append(
+                    max(
+                        [vllm_engine.get_generated_log_like(completion_output, answer, missing_log_prob=self._missing_log_prob) for answer in answers]
+                    )
                 )
-            )
         
         if chain_len == 1:
-            return math.exp(answer_log_likes_by_step[0])
+            return math.exp(log_likes_by_step[0])
         else:
             # 1. 과정 점수 : 스텝 간의 likelihood가 꾸준히 증가했는가?
-            reward_increases = self._calculate_confidence_increases(answer_log_likes_by_step)
+            reward_increases = self._calculate_confidence_increases(log_likes_by_step)
 
             # 2. 결과 점수 : 마지막 스텝에서의 likelihood가 높은 값인가?
-            reward_last_step = math.exp(answer_log_likes_by_step[-1])
+            reward_last_step = math.exp(log_likes_by_step[-1])
 
             # 3. [과정+결과] 가중 합산 최종 리워드
             return (alpha * reward_increases) + ((1-alpha) * reward_last_step)
@@ -108,7 +111,7 @@ class RewardModel():
         if common_util.check_option(reward_option, RewardOption.CORRECT):
             chain_reward += chain_result._f1
         if common_util.check_option(reward_option, RewardOption.CONFIDENCE):
-            chain_reward += self._calculate_confidence(answers, chain_result, vllm_engine)
+            chain_reward += self._calculate_confidence(None, chain_result, vllm_engine)
         
         return chain_reward
 

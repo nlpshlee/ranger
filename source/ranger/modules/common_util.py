@@ -96,13 +96,16 @@ def check_gpu_memory_of_torch(devices=[0], prefix='', do_print=True):
     # 해결법
     'pip install pynvml'으로 라이브러리 설치하고 아래처럼 코드 변경
 '''
-def check_gpu_memory(devices=[0], prefix='', do_print=True):
+def check_gpu_memory(devices=[0], prefix='', do_torch_clear=False, do_print=True):
     if not torch.cuda.is_available():
         if do_print:
             logging(f'# common_util.check_gpu_memory() [GPU] CUDA not available')
 
         return -1, -1, -1
     else:
+        if do_torch_clear:
+            torch.cuda.empty_cache()
+
         pynvml.nvmlInit()
         total_all, used_all, free_all = 0, 0, 0
 

@@ -135,7 +135,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     vllm_config = {
         "model_name": model_name,
         'device': f'cuda:{cg_device}',
-        'gpu_memory_utilization': 0.40,
+        'gpu_memory_utilization': 0.35,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
@@ -162,7 +162,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     model_config = {
         "model_name": model_name,
         'device': f'cuda:{rt_device}',
-        'gpu_memory_utilization': 0.40,
+        'gpu_memory_utilization': 0.35,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
@@ -171,14 +171,14 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         'lora_r': 8,
         'lora_target_modules': ["q_proj", "k_proj", "v_proj", "o_proj"],
         'lora_alpha': 8,
-        'use_gradient_checkpointing': False
+        'use_gradient_checkpointing': False         # 'True'로 설정하면, 순전파에서 모든 중간 계산 결과를 저장하는 대신, 꼭 필요한 일부만 저장하고 역전파 시 나머지를 재계산하는 방식 (메모리 효율 증가, 학습 속도 저하)
     }
 
     grpo_config = {
-        'gradient_accumulation_steps': 20,           # Gradient Accumulation (실제 loss가 반영되는 가상의 배치 사이즈)
-        'learning_rate': 1e-5,                       # learning rate for `AdamW` optimizer
-        'epsilon': 0.2,                              # CLIP epsilon
-        'beta': 0.04                                 # KL coefficient
+        'gradient_accumulation_steps': 16,          # Gradient Accumulation (실제 loss를 반영할 배치 스텝, '10'이라면 10번 째 배치 마다)
+        'learning_rate': 1e-5,                      # learning rate for `AdamW` optimizer
+        'epsilon': 0.2,                             # CLIP epsilon
+        'beta': 0.04                                # KL coefficient
     }
 
     ranger_trainer = RANGERTrainer(chain_generator,
@@ -195,8 +195,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
 
     wandb.init(
-        # project=f'RANGER-GRPO-Training [{common_util.get_datetime_now("%Y%m%d %H %M %S")}]',
-        project=f'RANGER-GRPO-Training-250921-2',
+        project=f'RANGER-GRPO-Training-250924-1',
         config={
             'model_name': model_name,
             'max_model_len': max_model_len,
@@ -216,7 +215,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     )
 
     print(f'\n# ranger_runner.run_base() start datetime : {common_util.get_datetime_now()}\n')
-    ranger_trainer.train(train_datas[:100], test_datas[:10], epochs, batch_size, n_chains, chain_depth)
+    ranger_trainer.train(train_datas, test_datas, epochs, batch_size, n_chains, chain_depth)
     print(f'\n# ranger_runner.run_base() end datetime : {common_util.get_datetime_now()}\n')
 
 
@@ -233,6 +232,8 @@ if __name__ == "__main__":
     seed = 42
     set_seed(seed)
 
+    # train_data_path = f'{data_dir}/corag/input/v0/multihopqa_train.json'
+    # test_data_path = f'{data_dir}/corag/input/v0/multihopqa_valid.json'
     train_data_path = f'{data_dir}/corag/input/v1/custom_musique_train_5000_final.jsonl'
     test_data_path = f'{data_dir}/corag/input/v1/custom_multihopqa_eval_1000.jsonl'
     train_datas, test_datas = load_datas(train_data_path, test_data_path, seed, do_print=False)

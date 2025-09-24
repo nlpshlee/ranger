@@ -351,7 +351,7 @@ class CoRagAgent:
                     chain_result._completion_outputs.append(completion_output)
                     chain_result._log_likes.append(self._vllm_engine.get_generated_log_like(completion_output))
 
-                    if _compare_answers(query_result._answers, normalized_final_answer):
+                    if _compare_answers(query_result._answer_set, normalized_final_answer):
                         chain_result._is_stop = True
 
                     idx += 1
@@ -379,6 +379,19 @@ class CoRagAgent:
                 break
         
         return all_stopped
+
+
+    def _get_count_processing_chains(self, query_results: List[QueryResult], check_depth):
+        count = 0
+
+        for query_result in query_results:
+            for chain_result in query_result._chain_results:
+                depth = len(chain_result._final_answers)
+
+                if check_depth == depth:
+                    count += 1
+        
+        return count
 
 
     def generate_batch(self, task_desc: str, datas: list, n_chains: int, chain_depth: int, adapter_path: str) -> List[QueryResult]:
@@ -418,8 +431,9 @@ class CoRagAgent:
             # 서브 스텝 마다, 최종 답변 확인
             self.check_step_final_answers(query_results)
 
+            count_processing_chains = self._get_count_processing_chains(query_results, depth+1)
             _, depth_elapsed_str = common_util.get_elapsed_time_ms(depth_start)
-            print(f"# CoRagAgent.generate_batch() [{self._batch_idx} batch] {depth+1} depth end, elapsed_time : {depth_elapsed_str}")
+            print(f"# CoRagAgent.generate_batch() [{self._batch_idx} batch] [{depth+1} depth] [{count_processing_chains} chains] end, elapsed_time : {depth_elapsed_str}")
 
             # 모든 체인이 중단되었는지 확인
             if self.check_all_stop(query_results):
