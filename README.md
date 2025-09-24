@@ -80,7 +80,7 @@ bash scripts/start_retriever_server.sh
 bash scripts/check_retriever_server.sh
 ```
 
-(3) VLLM Start
+(3) VLLM Start (지금은 VLLM을 ChainGenerator의 내부 엔진으로 사용 -> 실행 X !!!)
 ```bash
 # 스크립트로 실행 (nvidia-smi로 새로운 모델 메모리에 올라가는지 확인)
 bash scripts/start_vllm_server.sh
@@ -106,6 +106,13 @@ wandb login (or wandb login --relogin)
 ## Main Run
 
 ```bash
+# 아래 명령어 입력하고, 본인 wandb 계정의 KEY 입력
+wandb login
+
+# PyTorch의 메모리 효율성을 높여주는 옵션을 리눅스 환경 변수로 적용
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# 소스 경로로 이동
 cd source/ranger
 
 # single gpu ('o' or '1')
