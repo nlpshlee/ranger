@@ -49,6 +49,26 @@ class VllmEngine:
         self._called_cnt = 0
 
 
+    def _truncate_prompts(self, prompts: List[str]) -> List[str]:
+        truncated_prompts = []
+
+        for prompt in prompts:
+            token_ids = self._tokenizer(
+                prompt,
+                truncation=True,
+                max_length=self._max_model_len,
+                add_special_tokens=True
+            )['input_ids']
+
+            if token_ids[0] == token_ids[1] == 128000:
+                token_ids = token_ids[1:]
+
+            truncated_prompt = self._tokenizer.decode(token_ids, skip_special_tokens=False)
+            truncated_prompts.append(truncated_prompt)
+        
+        return truncated_prompts
+
+
     def _get_generated_text(self, completion_output: CompletionOutput) -> str:
         return completion_output.text.strip()
     
@@ -122,6 +142,9 @@ class VllmEngine:
         # LoRA Adapter 추가 코드
         prompts = [self._tokenizer.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
 
+        # vllm은 내부적으로 입력 길이 제한을 하지 않음 -> 직접 잘라서 넘겨줘야 함...
+        truncated_prompts = self._truncate_prompts(prompts)
+
         # LoRA Adapter 추가 코드
         '''
             chat() -> generate()
@@ -133,7 +156,7 @@ class VllmEngine:
                 - LoRA를 동적으로 적용하려면 반드시 llm.generate() 사용
         '''
         req_outputs: List[RequestOutput] = self._llm.generate(
-            prompts,
+            truncated_prompts,
             sampling_params=sampling_params,
             lora_request=lora_request,
             use_tqdm=False

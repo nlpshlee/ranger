@@ -135,7 +135,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     vllm_config = {
         "model_name": model_name,
         'device': f'cuda:{cg_device}',
-        'gpu_memory_utilization': 0.35,
+        'gpu_memory_utilization': 0.30,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
@@ -162,7 +162,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     model_config = {
         "model_name": model_name,
         'device': f'cuda:{rt_device}',
-        'gpu_memory_utilization': 0.35,
+        'gpu_memory_utilization': 0.30,
         'dtype': dtype,
         'max_model_len': max_model_len,
         'max_token_gen': max_token_gen,
@@ -171,7 +171,8 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         'lora_r': 8,
         'lora_target_modules': ["q_proj", "k_proj", "v_proj", "o_proj"],
         'lora_alpha': 8,
-        'use_gradient_checkpointing': False         # 'True'로 설정하면, 순전파에서 모든 중간 계산 결과를 저장하는 대신, 꼭 필요한 일부만 저장하고 역전파 시 나머지를 재계산하는 방식 (메모리 효율 증가, 학습 속도 저하)
+        'use_gradient_checkpointing': False,        # 'True'로 설정하면, 순전파에서 모든 중간 계산 결과를 저장하지 않고, 꼭 필요한 일부만 저장하고 역전파 시 나머지를 재계산하는 방식 (메모리 효율 증가, 학습 속도 저하)
+        'resume_run_time': False                    # 이전 학습에서 이어서 학습할 때, 이전에 학습했던 런타임 (Ex. '2025-09-26-16-22-04')
     }
 
     grpo_config = {
@@ -195,7 +196,7 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
     epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
 
     wandb.init(
-        project=f'RANGER-GRPO-Training-250924-1',
+        project=f'RANGER-GRPO-Training-251129-1',
         config={
             'model_name': model_name,
             'max_model_len': max_model_len,
@@ -214,9 +215,14 @@ def run_base(data_dir: str, out_dir: str, model_name: str, train_datas: list, te
         }
     )
 
-    print(f'\n# ranger_runner.run_base() start datetime : {common_util.get_datetime_now()}\n')
+    print(f'\n# ranger_runner.run_base() start : {common_util.get_datetime_now()}\n')
+    start_time = common_util.get_time_ms()
+
+    # ranger_trainer.train(train_datas[977:1000], test_datas[:1], epochs, batch_size, n_chains, chain_depth)
     ranger_trainer.train(train_datas, test_datas, epochs, batch_size, n_chains, chain_depth)
-    print(f'\n# ranger_runner.run_base() end datetime : {common_util.get_datetime_now()}\n')
+
+    _, run_elapsed_str = common_util.get_elapsed_time_ms(start_time)
+    print(f'\n# ranger_runner.run_base() end : {common_util.get_datetime_now()}, elapsed : {run_elapsed_str}\n')
 
 
 if __name__ == "__main__":
@@ -234,8 +240,10 @@ if __name__ == "__main__":
 
     # train_data_path = f'{data_dir}/corag/input/v0/multihopqa_train.json'
     # test_data_path = f'{data_dir}/corag/input/v0/multihopqa_valid.json'
-    train_data_path = f'{data_dir}/corag/input/v1/custom_musique_train_5000_final.jsonl'
-    test_data_path = f'{data_dir}/corag/input/v1/custom_multihopqa_eval_1000.jsonl'
+    # train_data_path = f'{data_dir}/corag/input/v1/custom_musique_train_5000_final.jsonl'
+    # test_data_path = f'{data_dir}/corag/input/v1/custom_multihopqa_eval_1000.jsonl'
+    train_data_path = f'{data_dir}/custom_musique_train_5000_final.jsonl'
+    test_data_path = f'{data_dir}/custom_multihopqa_eval_1000.jsonl'
     train_datas, test_datas = load_datas(train_data_path, test_data_path, seed, do_print=False)
 
     # model_name = 'meta-llama/Meta-Llama-3-8B-Instruct'

@@ -2,7 +2,7 @@ from _init import *
 
 from typing import List
 import numpy as np
-import wandb
+import wandb, shutil
 
 import torch
 from torch.nn.functional import log_softmax
@@ -11,6 +11,7 @@ from torch.optim import AdamW
 
 from transformers import Trainer, TrainingArguments, AutoModelForCausalLM, AutoTokenizer
 from accelerate import Accelerator
+from peft import PeftModel
 from unsloth import FastLanguageModel
 
 from ranger.modules import common_util, json_util, container_util
@@ -50,11 +51,24 @@ class RANGERTrainer(Trainer):
         self._lora_target_modules                   : List[str]
         self._lora_alpha                            : int
         self._use_gradient_checkpointing            : bool
+        self._resume_run_time                       : str
         self._gradient_accumulation_steps           : int
         self._lr                                    : float
         self._epsilon                               : float
         self._beta                                  : float
         self._set_config(self._model_config, self._grpo_config)
+
+        # Output 경로 설정
+        self._run_time                              : str
+        self._checkpoint_path                       : str
+        self._checkpoint_history_path               : str
+        self._optimizer_path                        : str
+        self._adapter_path                          : str
+        self._adapter_history_path                  : str
+        self._resume_checkpoint_path                : str = ''
+        self._resume_optimizer_path                 : str = ''
+        self._resume_adapter_path                   : str = ''
+        self._set_output_dir()
 
         '''
             '_'가 없는 변수는 transformers.Trainer 상속 변수
@@ -76,10 +90,6 @@ class RANGERTrainer(Trainer):
             args=TrainingArguments(output_dir=self._out_dir)
         )
 
-        # Output 경로 설정
-        self._run_time = common_util.get_datetime_now("%Y-%m-%d-%H-%M-%S")
-        self._adapter_path = f'{self._out_dir}/lora_adapter_{self._run_time}'
-
         self._global_step = 0
         self._train_epoch_results = []
         self._test_epoch_results = []
@@ -98,23 +108,49 @@ class RANGERTrainer(Trainer):
         self._lora_target_modules                   = model_config['lora_target_modules']
         self._lora_alpha                            = model_config['lora_alpha']
         self._use_gradient_checkpointing            = model_config['use_gradient_checkpointing']
+        self._resume_run_time                       = model_config['resume_run_time']
 
         print(f'\n# RANGERTrainer._set_config() grpo_config : {json_util.to_str(grpo_config)}\n')
         self._gradient_accumulation_steps           = grpo_config['gradient_accumulation_steps']
         self._lr                                    = grpo_config['learning_rate']
         self._epsilon                               = grpo_config['epsilon']
         self._beta                                  = grpo_config['beta']
+    
+
+    def _set_output_dir(self):
+        self._run_time = common_util.get_datetime_now("%Y-%m-%d-%H-%M-%S")
+        self._checkpoint_path = f'{self._out_dir}/checkpoint_{self._run_time}'
+        self._checkpoint_history_path = f'{self._checkpoint_path}/checkpoint_history.txt'
+        self._optimizer_path = f'{self._checkpoint_path}/optimizer.pt'
+        self._adapter_path = f'{self._out_dir}/lora_adapter_{self._run_time}'
+        self._adapter_history_path = f'{self._adapter_path}/adapter_history.txt'
+
+        if self._resume_run_time is not None:
+            self._resume_checkpoint_path = f'{self._out_dir}/checkpoint_{self._resume_run_time}'
+            self._resume_optimizer_path = f'{self._resume_checkpoint_path}/optimizer.pt'
+            self._resume_adapter_path = f'{self._out_dir}/lora_adapter_{self._resume_run_time}'
+            self._copy_from_resume()
+
+
+    def _copy_from_resume(self):
+        if os.path.exists(self._resume_checkpoint_path):
+            resume_checkpoint_history_path = f'{self._resume_checkpoint_path}/checkpoint_history.txt'
+            if os.path.exists(resume_checkpoint_history_path):
+                os.makedirs(self._checkpoint_path, exist_ok=True)
+                shutil.copy2(resume_checkpoint_history_path, self._checkpoint_history_path)
+                print(f'# RANGERTrainer._copy_from_resume() {resume_checkpoint_history_path} -> {self._checkpoint_history_path}')
+        
+        if os.path.exists(self._resume_adapter_path):
+            shutil.copytree(self._resume_adapter_path, self._adapter_path)
+            print(f'# RANGERTrainer._copy_from_resume() {self._resume_adapter_path} -> {self._adapter_path}')
 
 
     def _init_model(self):
         if type(self._model_name) is str:
-            print('# RANGERTrainer._init_model() Instantiating model')
+            print('\n\n# RANGERTrainer._init_model() Instantiating model')
 
-            '''
-                base 모델을 먼저 초기화하고, 이 모델을 이용하여 RoLA 튜닝을 위한 PEFT 모델을 초기화
-                최종 사용은 PEFT 모델
-            '''
-            self.model, self.processing_class = FastLanguageModel.from_pretrained(
+            # 1. base 모델 초기화
+            base_model, self.processing_class = FastLanguageModel.from_pretrained(
                 model_name=self._model_name,
                 max_seq_length=self._max_model_len,
                 gpu_memory_utilization=self._gpu_memory_utilization,
@@ -122,28 +158,55 @@ class RANGERTrainer(Trainer):
                 load_in_4bit=self._load_in_4bit,
                 trust_remote_code=self._trust_remote_code
             )
-            self.model = self.model.to(self._device)
             common_util.check_gpu_memory(self._use_gpu_ids, '[Base Model Init]')
 
-            self.model = FastLanguageModel.get_peft_model(
-                self.model,
-                r=self._lora_r,
-                target_modules=self._lora_target_modules,
-                lora_alpha=self._lora_alpha,
-                use_gradient_checkpointing=self._use_gradient_checkpointing
-            )
+            '''
+                base 모델을 먼저 초기화하고, 이 모델을 이용하여 RoLA 튜닝을 위한 PEFT 모델을 초기화
+                최종 사용은 PEFT 모델
+            '''
+
+            # 2-1. 새로 학습하는 경우
+            if not os.path.exists(self._resume_checkpoint_path):
+                self.model = FastLanguageModel.get_peft_model(
+                    base_model,
+                    r=self._lora_r,
+                    target_modules=self._lora_target_modules,
+                    lora_alpha=self._lora_alpha,
+                    use_gradient_checkpointing=self._use_gradient_checkpointing
+                )
+            # 2-2. 이어서 학습하는 경우 (LoRA 어댑터 가중치만 로드하고 옵티마이저는 로드하지 않음)
+            else:
+                print(f'\n# RANGERTrainer._init_model() adapter resuming from : {self._resume_checkpoint_path}')
+                self.model = PeftModel.from_pretrained(base_model, self._resume_checkpoint_path)
+                print(f'# RANGERTrainer._init_model() adapter loaded successfully\n')
+            
             self.model = self.model.to(self._device)
             common_util.check_gpu_memory(self._use_gpu_ids, '[PEFT Model Init]')
 
+            # 3. optimizer 초기화
             self.optimizer = AdamW(self.model.parameters(), lr=self._lr)
 
-            # 배치를 '1'로 했을 때, 발생하는 학습 붕괴를 막기 위해, 그래디언트를 누적하여 반영하는 라이브러리
+            # 4. accelerator 초기화
+            '''
+                배치를 '1'로 했을 때, 발생하는 학습 붕괴를 막기 위해, 그래디언트를 누적하여 반영하는 라이브러리
+            '''
             os.environ['ACCELERATE_TORCH_DEVICE'] = self._device
             self.accelerator = Accelerator(gradient_accumulation_steps=self._gradient_accumulation_steps)
             self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
             common_util.check_gpu_memory(self._use_gpu_ids, f'[Accelerator Init] with device:{self.accelerator.device}')
 
-            # ranger 멤버 변수에 trainer 상속 변수 할당
+            # 5. [2-2]와 같이 optimizer를 이어서 학습하는 경우
+            '''
+                먼저, [3]에서 기본 옵티마이저를 초기화 하고, 이를 바탕으로 accelerator를 초기화 함
+                그 다음에, 이어서 학습하는 경우에는 저장된 옵티마이저 상태를 불러와서, 초기화된 옵티마이저에 전달
+            '''
+            if os.path.exists(self._resume_optimizer_path):
+                print(f'\n# RANGERTrainer._init_model() optimizer resuming from : {self._resume_optimizer_path}')
+                optimizer_state = torch.load(self._resume_optimizer_path, map_location=self.accelerator.device)
+                self.optimizer.load_state_dict(optimizer_state)
+                print(f'# RANGERTrainer._init_model() optimizer loaded successfully\n')
+
+            # 6. 마무리 (ranger 멤버 변수에 trainer 상속 변수 할당)
             self._tokenizer = self.processing_class
 
             print(f'\tmodel : {type(self.model)}')
@@ -157,20 +220,51 @@ class RANGERTrainer(Trainer):
 
     def _reset_epoch(self):
         self._chain_generator.reset()
-    
-    
-    def _save_adapter_for_vllm(self, step_name: str, step: int):
-        print(f'\n# RANGERTrainer._save_adapter_for_vllm() {step_name} : {step}')
 
+
+    def _save(self, epoch, batch):
         if self.accelerator.is_main_process:
-            unwrapped_model = self.accelerator.unwrap_model(self.model)
-            unwrapped_model.save_pretrained(self._adapter_path)
-            print(f'# RANGERTrainer._save_adapter_for_vllm() [ {common_util.get_datetime_now()} ] saved : {self._adapter_path}\n')
-        else:
-            print(f'# RANGERTrainer._save_adapter_for_vllm() don\'t save : not accelerator.is_main_process')
+            saved_time = common_util.get_datetime_now()
+            print(f'\n# RANGERTrainer._save() [{saved_time}] - [ {epoch} epoch, {batch} batch ]')
 
+            self._save_model(epoch, batch, saved_time)
+            self._save_adapter_for_vllm(epoch, batch, saved_time)
+        else:
+            print(f'# RANGERTrainer._save() don\'t save : [accelerator is not in the main process]\n')
+        
         self.accelerator.wait_for_everyone()
-        common_util.check_gpu_memory(self._use_gpu_ids, '[adapter saved]')
+        common_util.check_gpu_memory(self._use_gpu_ids, '[saved]')
+
+
+    def _save_model(self, epoch, batch, saved_time):
+        os.makedirs(self._checkpoint_path, exist_ok=True)
+
+        # 어댑터 가중치 저장 (이어서 학습하기 위해서는 optimizer와 같은 경로에 저장되어야 함)
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        unwrapped_model.save_pretrained(self._checkpoint_path)
+
+        # 옵티마이저 상태 저장
+        optimizer_state = self.optimizer.state_dict()
+        self.accelerator.save(optimizer_state, self._optimizer_path)
+
+        # RNG 상태 저장 (선택사항이지만 권장)
+        # self.accelerator.save_rng_state(self._checkpoint_path)
+
+        print(f'\n# RANGERTrainer._save_model() checkpoint_path : {self._checkpoint_path}')
+        with open(self._checkpoint_history_path, 'a', encoding='utf-8') as f:
+            f.write(f'[{saved_time}] - [ {epoch} epoch, {batch} batch ], checkpoint_path : {self._checkpoint_path}\n')
+
+
+    def _save_adapter_for_vllm(self, epoch, batch, saved_time):
+        os.makedirs(self._adapter_path, exist_ok=True)
+
+        # 어댑터 가중치 저장 (ChainGenerator 내의 VLLM에게 넘겨줄 LoRA 어댑터)
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        unwrapped_model.save_pretrained(self._adapter_path)
+
+        print(f'# RANGERTrainer._save_adapter_for_vllm() adapter_path : {self._adapter_path}\n')
+        with open(self._adapter_history_path, 'a', encoding='utf-8') as f:
+            f.write(f'[{saved_time}] - [ {epoch} epoch, {batch} batch ], adapter_path : {self._adapter_path}\n')
 
 
     def _calculate_advantages(self, query_result: QueryResult, epsilon=1e-8):
@@ -551,7 +645,7 @@ class RANGERTrainer(Trainer):
         data_size = len(train_datas)
 
         # 0. [base] 성능 측정
-        self.evaluate_all(0, batch_size, n_chains, chain_depth, True, True)
+        self.evaluate_all(0, batch_size, n_chains, chain_depth, do_test=True)
 
         for epoch in range(1, epochs+1):
             print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] start : {common_util.get_datetime_now()} {"#"*25}\n')
@@ -604,6 +698,9 @@ class RANGERTrainer(Trainer):
                     print(f'\n# RANGERTrainer.train() [ {epoch} epoch - {batch_idx+1} batch ] : sync gradients (accelerator)')
                     common_util.check_gpu_memory(self._use_gpu_ids, f'[ {epoch} epoch - {batch_idx+1} batch ]', do_torch_clear=True)
 
+                    # 7. 내부 PEFT 모델의 여러 state와 adapter 저장 (adapter는 ChainGenerator.VllmEngine 내부의 VLLM 모델로 전달하기 위함)
+                    self._save(epoch, batch_idx+1)
+
                 print(f'\n# RANGERTrainer.train() all_batch_loss[-10:] : {all_batch_loss[-10:]}')
                 print(f'# RANGERTrainer.train() sum_batch_loss : {sum(all_batch_loss)}')
                 print(f'# RANGERTrainer.train() avg_batch_loss : {sum(all_batch_loss) / len(all_batch_loss)}\n')
@@ -612,14 +709,11 @@ class RANGERTrainer(Trainer):
                 print(f'# RANGERTrainer.train() [ {batch_idx+1} batch ] end, elapsed_time : {batch_elapsed_str}\n')
 
 
-            # 7. RANGERTrainer 내부 PEFT 모델의 어댑터를 ChainGenerator.VllmAgent(VllmEngine) 내부의 VLLM 모델로 전달하기 위해, 저장
-            self._save_adapter_for_vllm('epoch', epoch)
-
             _, epoch_elapsed_str = common_util.get_elapsed_time_ms(epoch_start)
             print(f'{"#"*25} RANGERTrainer.train() [ {epoch} epoch ] end : {common_util.get_datetime_now()}, elapsed : {epoch_elapsed_str} {"#"*25}\n')
 
             # 8. 현재 epoch 학습 완료 후, 성능 측정
-            self.evaluate_all(epoch, batch_size, n_chains, chain_depth, True, True)
+            self.evaluate_all(epoch, batch_size, n_chains, chain_depth, do_test=True)
 
 
         # 전체 epoch에 대해 각 epoch 별로 결과를 비교한 파일 생성 (검토 전용)
@@ -727,6 +821,10 @@ class RANGERTrainer(Trainer):
 
 
     def write_results(self, prefix, epoch_results:List[List[QueryResult]]):
+        if len(epoch_results) == 0 or len(epoch_results[0]) == 0:
+            print(f'# RANGERTrainer.write_results() [ {prefix} ] epoch_results is empty')
+            return None
+
         epoch_len = len(epoch_results)
         query_len = len(epoch_results[0])
 
