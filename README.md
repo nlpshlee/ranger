@@ -15,7 +15,7 @@ pip install torch==2.6.0+cu124 torchvision torchaudio --index-url https://downlo
 
 라이브러리 설치
 ```bash
-pip install -r requeriments.txt
+pip install -r requirements.txt
 ```
 
 <!-- xformers 호환 버전 설치
