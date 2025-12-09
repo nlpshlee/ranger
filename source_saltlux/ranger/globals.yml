@@ -1,0 +1,8 @@
+DEBUG:
+  LOG: true
+  ERROR: true
+  VLLM: true
+  CORAG: true
+  CORAG_SEARCH: false
+  CORAG_TEST: false
+  CHAIN: true
