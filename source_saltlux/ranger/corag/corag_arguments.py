@@ -4,7 +4,7 @@ from transformers import TrainingArguments
 
 
 @dataclass
-class CoRagArguments(TrainingArguments):
+class CoragArguments(TrainingArguments):
     max_len: int = field(
         default=3072,
         metadata={

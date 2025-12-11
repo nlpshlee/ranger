@@ -7,7 +7,7 @@ from threading import Lock
 from contextlib import nullcontext
 from transformers import PreTrainedTokenizerFast
 
-from ranger.corag.corag_arguments import CoRagArguments
+from ranger.corag.corag_arguments import CoragArguments
 
 
 def load_corpus(path: str, split: str) -> Dataset:
@@ -103,7 +103,7 @@ def apply_context_placement_strategy(context_placement: str, contexts: List[str]
         raise ValueError(f'Invalid context placement strategy: {context_placement}')
 
 
-def format_documents_for_final_answer(args: CoRagArguments,
+def format_documents_for_final_answer(args: CoragArguments,
                                        context_doc_ids: List[str],
                                        tokenizer: PreTrainedTokenizerFast,
                                        corpus: Dataset,

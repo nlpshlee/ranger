@@ -3,55 +3,39 @@ from _init import *
 import threading, math
 from typing import List, Dict
 from datasets import Dataset
-from transformers import AutoTokenizer, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast
 
 from ranger.utils import common_utils
 
 from ranger.vllm.vllm_engine import VllmEngine
 from ranger.corag import corag_utils, corag_search, corag_prompts
-from ranger.corag.corag_arguments import CoRagArguments
+from ranger.corag.corag_arguments import CoragArguments
 from ranger.corag.corag_result import ChainResult, QueryResult
 
 
-class CoRagAgent:
+class CoragAgent:
     def __init__(self,
-                 vllm_engine: VllmEngine, max_model_len: int, max_token_gen: int, temperature: float,
-                 top_k_query: int, top_k_sub_query: int,
+                 engine: VllmEngine, top_k_query: int, top_k_sub_query: int, task_desc: str,
                  corpus: Dataset=corag_utils.load_corpus('corag/kilt-corpus', 'train')):
 
-        self._vllm_engine = vllm_engine
-        self._corpus = corpus # 검색 대상 문서
-
-        self._corag_args = CoRagArguments()
-
-        self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._vllm_engine._model_name)
-        self._lock = threading.Lock()
-
-        self._task_desc: str
-        self._max_model_len = max_model_len
-        self._max_token_gen = max_token_gen
-        self._temperature = temperature
+        self._engine = engine
         self._top_k_query = top_k_query
         self._top_k_sub_query = top_k_sub_query
-        self._adapter_path: str
+        self._task_desc = task_desc
+        self._corpus = corpus # 검색 대상 문서
+
+        self._corag_args = CoragArguments()
+
+        self._tokenizer: PreTrainedTokenizerFast = self._engine._tokenizer
+        self._lock = threading.Lock()
 
         self._batch_idx = 0
+        self._adapter_path: str
 
 
     def reset(self):
         self._batch_idx = 0
-        self._vllm_engine.reset()
-
-
-    def _truncate_long_messages(self, messages: List[Dict]):
-        for msg in messages:
-            if len(msg['content']) < 2 * self._max_model_len:
-                continue
-
-            with self._lock:
-                msg['content'] = corag_utils.batch_truncate(
-                    [msg['content']], tokenizer=self._tokenizer, max_length=self._max_model_len, truncate_from_middle=True
-                )[0]
+        self._engine.reset()
 
 
     def _search_doc_for_query(self, query_results: List[QueryResult]):
@@ -62,7 +46,7 @@ class CoRagAgent:
             )
 
             query_result._doc_ids = [searched['id'] for searched in searcheds]
-            query_result._documents = corag_utils.format_documents_for_final_answer(
+            query_result._docs = corag_utils.format_documents_for_final_answer(
                 args=self._corag_args,
                 context_doc_ids=query_result._doc_ids,
                 tokenizer=self._tokenizer, corpus=self._corpus,
@@ -76,7 +60,7 @@ class CoRagAgent:
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
-                    # 서브 쿼리 생성 프롬프트 생성
+                    # 서브 쿼리 생성을 위한 프롬프트 생성
                     sub_query_prompt = corag_prompts.get_generate_sub_query_prompt(
                         query=query_result._query,
                         past_subqueries=chain_result._sub_querys,
@@ -84,14 +68,12 @@ class CoRagAgent:
                         task_desc=self._task_desc
                     )
 
-                    self._truncate_long_messages(sub_query_prompt)
-                    inputs.append(sub_query_prompt)
-        
-        # VLLM을 통해 서브 쿼리 생성
-        sub_querys = self._vllm_engine.generate_batch(
-            messages=inputs,
-            max_token_gen=self._max_token_gen,
-            temperature=self._temperature,
+                    # get_generate_sub_query_prompt() 에서 [prompt] 형식으로 size '1'인 리스트로 반환함
+                    inputs.append(sub_query_prompt[0])
+
+        # 서브 쿼리 생성
+        sub_querys = self._engine.generate_batch(
+            datas=inputs,
             return_completion_output=False,
             adapter_path=self._adapter_path
         )
@@ -115,9 +97,9 @@ class CoRagAgent:
                     )
                     
                     doc_ids = [searched['id'] for searched in searcheds]
-                    documents = [corag_utils.format_input_context(self._corpus[int(doc_id)]) for doc_id in doc_ids][::-1]
+                    docs = [corag_utils.format_input_context(self._corpus[int(doc_id)]) for doc_id in doc_ids][::-1]
                     chain_result._doc_ids_list.append(doc_ids)
-                    chain_result._documents_list.append(documents)
+                    chain_result._docs_list.append(docs)
 
 
     def _generate_sub_answers(self, query_results: List[QueryResult]):
@@ -126,16 +108,14 @@ class CoRagAgent:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
                     sub_answer_prompt = corag_prompts.get_generate_intermediate_answer_prompt(
-                            subquery=chain_result._sub_querys[-1],
-                            documents=chain_result._doc_ids_list[-1],
+                        subquery=chain_result._sub_querys[-1],
+                        documents=chain_result._docs_list[-1]
                     )
-                    self._truncate_long_messages(sub_answer_prompt)
-                    inputs.append(sub_answer_prompt)
 
-        sub_answers = self._vllm_engine.generate_batch(
-            messages=inputs,
-            max_token_gen=self._max_token_gen,
-            temperature=self._temperature,
+                    inputs.append(sub_answer_prompt[0])
+
+        sub_answers = self._engine.generate_batch(
+            datas=inputs,
             return_completion_output=False,
             adapter_path=self._adapter_path
         )
@@ -160,16 +140,13 @@ class CoRagAgent:
                         past_subqueries=chain_result._sub_querys or [],
                         past_subanswers=chain_result._sub_answers or [],
                         task_desc=self._task_desc,
-                        documents=query_result._documents,
+                        documents=query_result._docs
                     )
 
-                    self._truncate_long_messages(final_answer_prompt)
-                    inputs.append(final_answer_prompt)
+                    inputs.append(final_answer_prompt[0])
         
-        final_answer_completion_output_list = self._vllm_engine.generate_batch(
-            messages=inputs,
-            max_token_gen=self._max_token_gen,
-            temperature=0.0,
+        final_answer_completion_output_list = self._engine.generate_batch(
+            datas=inputs,
             return_completion_output=True,
             adapter_path=self._adapter_path
         )
@@ -181,8 +158,7 @@ class CoRagAgent:
                     final_answer, completion_output = final_answer_completion_output_list[idx]
                     normalized_final_answer = corag_utils.normalize_answer(final_answer)
                     chain_result._final_answers.append(normalized_final_answer)
-                    chain_result._completion_outputs.append(completion_output)
-                    chain_result._log_likes.append(self._vllm_engine.get_generated_log_like(completion_output))
+                    chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))
 
                     # answer_set 은 이미 소문자로 변환해서 저장된 상태이고, final_answer 은 소문자로 norm 처리되어 있음
                     if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
@@ -193,18 +169,18 @@ class CoRagAgent:
 
 
                     if DEBUG.CORAG_TEST:
-                        print(f'\n# [CORAG_TEST] CoRagAgent._check_step_final_answers()')
+                        print(f'\n# [CORAG_TEST] CoragAgent._check_step_final_answers()')
                         print(f'\tquery : {query_result._query}')
                         print(f'\tanswers : {query_result._answers}\n')
                         
                         print(f'\tfinal_answer : {normalized_final_answer}')
 
-                        log_like, toks, tok_ids, log_probs = self._vllm_engine.get_generated_log_like(completion_output, return_all=True)
-                        print(f'\tlog_likelihood : {math.exp(log_like)}\n')
+                        log_prob, toks, tok_ids, tok_log_probs = self._engine.get_generated_log_prob(completion_output, return_all=True)
+                        print(f'\tfinal_answer_prob : {math.exp(log_prob)}\n')
 
-                        for i, (tok, tok_id, log_prob) in enumerate(zip(toks, tok_ids, log_probs)):
-                            print(f'\ttok : [ {tok} ], id : {tok_id}, prob : {math.exp(log_prob)}')
-                            if i == 9:
+                        for i, (tok, tok_id, tok_log_prob) in enumerate(zip(toks, tok_ids, tok_log_probs)):
+                            print(f'\t\ttok : [ {tok} ], id : {tok_id}, prob : {math.exp(tok_log_prob)}')
+                            if i == 5:
                                 break
                         print()
 
@@ -236,9 +212,8 @@ class CoRagAgent:
         return count
 
 
-    def generate_batch(self, task_desc: str, datas: list, n_chains: int, chain_depth: int, adapter_path: str) -> List[QueryResult]:
+    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path: str) -> List[QueryResult]:
         self._batch_idx += 1
-        self._task_desc = task_desc
         self._adapter_path = adapter_path
 
         # 각 쿼리에 대한 결과 객체 초기화
@@ -275,7 +250,7 @@ class CoRagAgent:
             if DEBUG.CORAG:
                 count_processing_chains = self._get_count_processing_chains(query_results, depth+1)
                 elapsed_ms, elapsed_str = common_utils.get_elapsed_time_ms(depth_start)
-                print(f'# [CORAG] CoRagAgent.generate_batch() [{self._batch_idx} batch] [{depth+1} depth] [{count_processing_chains} chains], elapsed_time : {elapsed_str} ({elapsed_ms})ms')
+                print(f'# [CORAG] CoragAgent.generate_batch() [{self._batch_idx} batch] [{depth+1} depth] [{count_processing_chains} chains], elapsed_time : {elapsed_str} ({elapsed_ms})ms')
 
             # 모든 체인이 중단되었는지 확인
             if self._check_all_stop(query_results):

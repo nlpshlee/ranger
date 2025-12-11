@@ -48,14 +48,13 @@ def _compute_em_and_f1(answer_set: Set[str], predict: str):
 
 
 class ChainResult:
-    def __init__(self) -> None:
+    def __init__(self):
         self._sub_querys = []
         self._sub_answers = []
         self._doc_ids_list = []             # 2차원 배열
-        self._documents_list = []           # 2차원 배열
+        self._docs_list = []                # 2차원 배열
         self._final_answers = []
-        self._completion_outputs = []
-        self._log_likes = []
+        self._log_probs = []
         self._is_stop = False
         self._reward = -1                   # 0 ~ 1
         self._advantage = -1
@@ -86,17 +85,17 @@ class ChainResult:
 
     def print_chain(self):
         chain_depth = len(self._sub_querys)
-        print(f'ChainResult.print_chain() is_stop(correct) : {self._is_stop}, chain_depth : {chain_depth}')
-        print(f'\t[log_like]\t[sub_query]\t[doc_ids]\t[sub_answer]\t[final_answer]\n')
+        print(f'# [CORAG_TEST] ChainResult.print_chain() is_stop(correct) : {self._is_stop}, chain_depth : {chain_depth}')
+        print(f'\t[log_prob]\t[sub_query]\t[doc_ids]\t[sub_answer]\t[final_answer]\n')
 
         for i in range(chain_depth):
-            print(f'\t{self._log_likes[i]}\t{self._sub_querys[i]}\t{self._doc_ids_list[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
+            print(f'\t{self._log_probs[i]}\t{self._sub_querys[i]}\t{self._doc_ids_list[i]}\t{self._sub_answers[i]}\t{self._final_answers[i]}')
         print(f'\n\treward : {self._reward}')
         print(f'\tadvantage : {self._advantage}\n')
 
 
 class QueryResult:
-    def __init__(self) -> None:
+    def __init__(self):
         self._query_id = ''
         self._query = ''
         self._answers = List[str]
@@ -104,7 +103,7 @@ class QueryResult:
         self._hop = -1
         self._chain_results: List[ChainResult] = []
         self._doc_ids = []
-        self._documents = []
+        self._docs = []
         self._em = -1
         self._f1 = -1
     
