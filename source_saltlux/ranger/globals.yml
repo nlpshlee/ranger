@@ -6,3 +6,31 @@ DEBUG:
   CORAG_SEARCH: false
   CORAG_TEST: false
   CHAIN: true
+  CHAIN_TIME: true
+  CHAIN_SERVER: true
+
+
+VLLM_CONFIG:
+  MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
+  DEVICE: 0
+  DTYPE: 'float16'
+  MAX_SEQ_LENGTH: 4096
+  MAX_NEW_TOKENS: 128
+  TEMPERATURE: 0.7
+  GPU_MEMORY_UTILIZATION: 0.9
+  N_LOG_PROB: 20
+
+
+CORAG_CONFIG:
+  TOP_K_QUERY: 20
+  TOP_K_SUB_QUERY: 5
+  TASK_DESC: 'answer multi-hop questions'
+
+
+CHAIN_SERVER_CONFIG:
+  HOST: '127.0.0.1'
+  PORT: 5000
+  DEBUG: false
+  URL_GENERATE: '/chain/generate'
+  URL_RESET: '/chain/reset'
+
