@@ -6,8 +6,14 @@ from typing import List, Dict
 from ranger.utils import common_utils
 
 
-def search_by_http(query: str, topk=5, host='localhost', port=8000, timeout=30) -> List[Dict]:
-    url = f"http://{host}:{port}/retrieve/"  # 엔드포인트에 슬래시 포함
+def search_by_http(query: str, topk=5,
+                   host=RETRIEVER_SERVER_CONFIG['host'],
+                   port=RETRIEVER_SERVER_CONFIG['port'],
+                   url_retrieve=RETRIEVER_SERVER_CONFIG['url_retrieve'],
+                   timeout=30) -> List[Dict]:
+
+    url = f"http://{host}:{port}{url_retrieve}/"  # 엔드포인트에 슬래시 포함
+
     payload = {
         'query_text': query,
         'retrieval_method': 'retrieve_from_elasticsearch',

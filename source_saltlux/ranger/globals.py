@@ -1,8 +1,11 @@
-# from pathlib import Path
+from pathlib import Path
 import yaml
 
 
-with open('./globals.yml', 'r') as in_file:
+globals_file_path = Path(__file__).resolve()
+globals_dir = globals_file_path.parent
+
+with open(f'{globals_dir}/globals.yml', 'r') as in_file:
     data = yaml.safe_load(in_file)
 
 
@@ -16,6 +19,19 @@ class DEBUG:
     CHAIN = data['DEBUG']['CHAIN']
     CHAIN_TIME = data['DEBUG']['CHAIN_TIME']
     CHAIN_SERVER = data['DEBUG']['CHAIN_SERVER']
+
+
+ELASTICSEARCH_CONFIG = {
+    'host': data['ELASTICSEARCH_CONFIG']['HOST'],
+    'port': data['ELASTICSEARCH_CONFIG']['PORT']
+}
+
+
+RETRIEVER_SERVER_CONFIG = {
+    'host': data['RETRIEVER_SERVER_CONFIG']['HOST'],
+    'port': data['RETRIEVER_SERVER_CONFIG']['PORT'],
+    'url_retrieve': data['RETRIEVER_SERVER_CONFIG']['URL_RETRIEVE']
+}
 
 
 VLLM_CONFIG = {
@@ -44,7 +60,6 @@ CHAIN_SERVER_CONFIG = {
     'url_generate': data['CHAIN_SERVER_CONFIG']['URL_GENERATE'],
     'url_reset': data['CHAIN_SERVER_CONFIG']['URL_RESET']
 }
-
 CHAIN_SERVER_CONFIG['url'] = f'http://{CHAIN_SERVER_CONFIG["host"]}:{CHAIN_SERVER_CONFIG["port"]}'
 CHAIN_SERVER_CONFIG['url_full_generate'] = f'{CHAIN_SERVER_CONFIG["url"]}{CHAIN_SERVER_CONFIG["url_generate"]}'
 CHAIN_SERVER_CONFIG['url_full_reset'] = f'{CHAIN_SERVER_CONFIG["url"]}{CHAIN_SERVER_CONFIG["url_reset"]}'
