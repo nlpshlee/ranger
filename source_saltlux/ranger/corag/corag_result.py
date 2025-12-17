@@ -63,6 +63,32 @@ class ChainResult:
         self._f1 = -1
 
 
+    def __str__(self):
+        lines = []
+
+        for key, value in self.__dict__.items():
+            lines.append(f'{key} : {value}')
+
+        return '\n'.join(lines)
+
+
+    def to_dict(self):
+        return {k.lstrip('_'): v for k, v in self.__dict__.items()}
+
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        instance = cls()
+
+        for key, value in data.items():
+            internal_key = f'_{key}'
+
+            if hasattr(instance, internal_key):
+                setattr(instance, internal_key, value)
+        
+        return instance
+
+
     def make_get_completion(self, delim='\n'):
         completion_parts = []
         chain_depth = len(self._sub_querys)
@@ -99,14 +125,59 @@ class QueryResult:
         self._query_id = ''
         self._query = ''
         self._answers = List[str]
-        self._answer_set: Set[str]
+        self._answer_set: Set[str] = set()
         self._hop = -1
         self._chain_results: List[ChainResult] = []
         self._doc_ids = []
         self._docs = []
         self._em = -1
         self._f1 = -1
-    
+
+
+    def __str__(self):
+        lines = []
+
+        for key, value in self.__dict__.items():
+            lines.append(f'{key} : {value}')
+
+        return '\n'.join(lines)
+
+
+    def to_dict(self):
+        data = {}
+
+        for key, value in self.__dict__.items():
+            out_key = key.lstrip('_')
+
+            if isinstance(value, set):
+                data[out_key] = list(value)
+            elif out_key == 'chain_results':
+                data[out_key] = [cr.to_dict() for cr in value]
+            else:
+                data[out_key] = value
+
+        return data
+
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        instance = cls()
+
+        for key, value in data.items():
+            in_key = f'_{key}'
+
+            # 클래스에 정의된 멤버 변수인지 확인
+            if hasattr(instance, in_key):
+                if key == 'answer_set':
+                    setattr(instance, in_key, set(value))
+                elif key == 'chain_results':
+                    crs = [ChainResult.from_dict(cr) for cr in value]
+                    setattr(instance, in_key, crs)
+                else:
+                    setattr(instance, in_key, value)
+
+        return instance
+
 
     def compute_metrics(self):
         all_em, all_f1 = [], []

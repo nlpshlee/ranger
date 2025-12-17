@@ -59,32 +59,8 @@ class ChainGenerateServer(Resource):
 
         for result in results:
             for query_result in result:
-                qr_dict = {
-                    'query': query_result._query,
-                    'answers': query_result._answers,
-                    'chain_results': [],
-                    'em': query_result._em,
-                    'f1': query_result._f1
-                }
+                serialized_results.append(query_result.to_dict())
 
-                chain_results: List[ChainResult] = query_result._chain_results
-                for chain_result in chain_results:
-                    cr_dict = {
-                        'sub_querys': chain_result._sub_querys,
-                        'sub_answers': chain_result._sub_answers,
-                        'final_answers': chain_result._final_answers,
-                        'log_probs': chain_result._log_probs,
-                        'is_stop': chain_result._is_stop,
-                        'reward': chain_result._reward,
-                        'advantage': chain_result._advantage,
-                        'em': chain_result._em,
-                        'f1': chain_result._f1
-                    }
-
-                    qr_dict['chain_results'].append(cr_dict)
-                
-                serialized_results.append(qr_dict)
-        
         return serialized_results
 
 

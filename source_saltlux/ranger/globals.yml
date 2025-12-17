@@ -8,6 +8,7 @@ DEBUG:
   CHAIN: true
   CHAIN_TIME: true
   CHAIN_SERVER: true
+  CHAIN_CLIENT: true
   TRAIN: true
 
 

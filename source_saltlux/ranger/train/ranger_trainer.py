@@ -1,6 +1,7 @@
 from _init import *
 
 import shutil
+from typing import List
 
 import torch
 from torch.optim import AdamW
@@ -9,7 +10,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model
 from accelerate import Accelerator
 
-from ranger.utils import common_utils, json_utils
+from ranger.utils import common_utils, json_utils, container_utils
+from ranger.corag.corag_result import QueryResult
+from ranger.chain_generate.chain_generate_client import request_chain_generate, request_reset
 from ranger.reward.reward_calculator import RewardCalculator
 
 
@@ -37,6 +40,8 @@ class RangerTrainer:
 
         self._set_out_dir() # accelerator 초기화 이후에 호출
         self._init_model()
+
+        self._global_step = 0
 
 
     def _logging(self, msg: str, main_only=False):
@@ -220,3 +225,56 @@ class RangerTrainer:
         with open(self._adapter_history_path, 'a', encoding='utf-8') as f:
             f.write(f'{msg}{self._adapter_path}\n')
 
+
+    def _reset_epoch(self):
+        request_reset()
+
+
+    def train(self, train_datas, test_datas, epochs, batch_size, n_chains, chain_depth):
+        train_size = len(train_datas)
+        test_size = len(test_datas)
+
+        self._logging(f'RangerTrainer.train() train_size : {train_size}, epochs : {epochs}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}')
+        self._logging(f'RangerTrainer.train() start datetime : {common_utils.get_datetime_now()}\n')
+        train_start = common_utils.get_time_ms()
+
+        # 기본 성능 측정
+        self.evaluate(test_datas, batch_size, n_chains, chain_depth)
+
+        for epoch in range(1, epochs+1):
+            self._logging(f'RangerTrainer.train() {epoch} epoch start : {common_utils.get_datetime_now()}\n')
+            epoch_start = common_utils.get_time_ms()
+
+            all_batch_loss = []
+            batch_len = (train_size + batch_size - 1) // batch_size
+
+            for batch_idx, datas_batch in enumerate(container_utils.chunks(train_datas, batch_size)):
+                self._logging(f'RangerTrainer.train() {batch_idx+1} batch start : {common_utils.get_datetime_now()}\n')
+                batch_start = common_utils.get_time_ms()
+
+                self._global_step += 1
+
+                # 1. 체인 생성 (학습 배치와 체인 배치는 동일하게 맞춘 상태)
+                # len(datas_batch) == batch_size == len(query_results)
+                query_results: List[QueryResult] = request_chain_generate(
+                    datas_batch,
+                    batch_size,
+                    n_chains,
+                    chain_depth,
+                    self._adapter_path
+                )
+
+                # print(f'len(datas_batch) : {len(datas_batch)}')
+                # print(f'batch_size : {batch_size}')
+                # print(f'len(query_results) : {len(query_results)}\n')
+                # __temp = [query_result.to_dict() for query_result in query_results]
+                # print(f'query_results :\n{json_utils.to_str(__temp)}')
+
+                # sys.exit(-1)
+
+
+
+
+
+    def evaluate(self, datas, batch_size, n_chains, chain_depth):
+        pass

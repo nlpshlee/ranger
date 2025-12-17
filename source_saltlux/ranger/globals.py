@@ -19,6 +19,7 @@ class DEBUG:
     CHAIN = data['DEBUG']['CHAIN']
     CHAIN_TIME = data['DEBUG']['CHAIN_TIME']
     CHAIN_SERVER = data['DEBUG']['CHAIN_SERVER']
+    CHAIN_CLIENT = data['DEBUG']['CHAIN_CLIENT']
     TRAIN = data['DEBUG']['TRAIN']
 
 
