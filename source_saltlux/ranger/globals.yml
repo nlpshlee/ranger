@@ -61,5 +61,5 @@ MODEL_CONFIG:
   EPSILON: 0.2 # '0.2'로 고정해도 무방 (모델이 한 번의 업데이트에서 너무 급격하게 변하지 않도록 안전 장치를 거는 비율)
   KL_PENALTY: 0.01 # '0.01 ~ 0.05' (참조 모델과 너무 달라지지 않도록 하는 규제)
   USE_GRADIENT_CHECKPOINTING: false
-  RESUME_RUN_TIME: '2025-12-03-07-13-16' # (Ex. '2025-12-03-07-13-16')
+  RESUME_RUN_TIME: false # (Ex. '2025-12-03-07-13-16')
 

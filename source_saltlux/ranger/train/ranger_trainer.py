@@ -173,3 +173,50 @@ class RangerTrainer:
             self._optimizer.load_state_dict(opt_state)
         
         common_utils.check_gpu_memory(do_print=DEBUG.TRAIN, msg=f'[{self._device}][Model init complete]')
+
+
+    def _save(self, epoch, batch):
+        # [중요] 저장 시작 전 모든 프로세스 동기화
+        self._accelerator.wait_for_everyone()
+
+        if self._accelerator.is_main_process:
+            saved_time = common_utils.get_datetime_now()
+            self._logging(f'RangerTrainer._save() [{saved_time}] - [ {epoch} epoch, {batch} batch ]', main_only=True)
+
+            # 1. 경로 생성 (혹시 없을 경우를 대비)
+            os.makedirs(self._checkpoint_path, exist_ok=True)
+            os.makedirs(self._adapter_path, exist_ok=True)
+
+            # 2. 모델 래핑 해제 (한 번만 수행)
+            # PEFT 모델이므로 save_pretrained 호출 시 'Adapter Config'와 'Weights'만 가볍게 저장됨
+            unwrapped_model = self._accelerator.unwrap_model(self._model)
+
+            # 3. [Checkpoint] 학습 재개용 저장 (Adapter + Optimizer)
+            unwrapped_model.save_pretrained(self._checkpoint_path)
+            self._accelerator.save(self._optimizer.state_dict(), self._optimizer_path)
+            self._logging(f'RangerTrainer._save() Saved checkpoint : {self._checkpoint_path}', main_only=True)
+
+            # 4. [Serving] vLLM 서빙용 어댑터 저장
+            # (내용은 위와 같지만, 용도 분리를 위해 별도 경로에 복제 저장)
+            unwrapped_model.save_pretrained(self._adapter_path)
+            self._logging(f'RangerTrainer._save() Saved adapter : {self._adapter_path}', main_only=True)
+
+            # 5. 히스토리 파일 기록
+            self._write_save_history(epoch, batch, saved_time)
+        
+        # 저장이 완료될 때까지 다른 GPU 대기
+        self._accelerator.wait_for_everyone()
+
+        if self._accelerator.is_main_process:
+            common_utils.check_gpu_memory(do_print=DEBUG.TRAIN, msg=f'[{self._device}][Saved]')
+
+
+    def _write_save_history(self, epoch, batch, saved_time):
+        msg = f'[{saved_time}] - [ {epoch} epoch, {batch} batch ], path : '
+
+        with open(self._checkpoint_history_path, 'a', encoding='utf-8') as f:
+            f.write(f'{msg}{self._checkpoint_path}\n')
+        
+        with open(self._adapter_history_path, 'a', encoding='utf-8') as f:
+            f.write(f'{msg}{self._adapter_path}\n')
+
