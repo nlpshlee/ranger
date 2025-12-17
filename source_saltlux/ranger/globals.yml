@@ -8,6 +8,7 @@ DEBUG:
   CHAIN: true
   CHAIN_TIME: true
   CHAIN_SERVER: true
+  TRAIN: true
 
 
 # elasticsearch-7.10.1/config/elasticsearch.yml
@@ -20,7 +21,7 @@ ELASTICSEARCH_CONFIG:
 RETRIEVER_SERVER_CONFIG:
   HOST: '127.0.0.1'
   PORT: 8200
-  URL_RETRIEVE: '/retrieve/es'
+  URL_RETRIEVE: '/retrieve'
 
 
 VLLM_CONFIG:
@@ -42,8 +43,23 @@ CORAG_CONFIG:
 
 CHAIN_SERVER_CONFIG:
   HOST: '127.0.0.1'
-  PORT: 5200
+  PORT: 7200
   DEBUG: false
   URL_GENERATE: '/chain/generate'
   URL_RESET: '/chain/reset'
+
+
+MODEL_CONFIG:
+  MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
+  DTYPE: 'float16'
+  MAX_SEQ_LENGTH: 4096
+  LORA_R: 8
+  LORA_TARGET_MODULES: ['q_proj', 'k_proj', 'v_proj', 'o_proj']
+  LORA_ALPHA: 8
+  GRADIENT_ACCUMULATION_STEPS: 16
+  LEARNING_RATE: 0.0001 # '0.00005 ~ 0.0002' 튜닝 필요
+  EPSILON: 0.2 # '0.2'로 고정해도 무방 (모델이 한 번의 업데이트에서 너무 급격하게 변하지 않도록 안전 장치를 거는 비율)
+  KL_PENALTY: 0.01 # '0.01 ~ 0.05' (참조 모델과 너무 달라지지 않도록 하는 규제)
+  USE_GRADIENT_CHECKPOINTING: false
+  RESUME_RUN_TIME: '2025-12-03-07-13-16' # (Ex. '2025-12-03-07-13-16')
 

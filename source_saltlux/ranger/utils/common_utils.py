@@ -56,6 +56,9 @@ def check_gpu_memory(devices: list=None, do_torch_clear=True, do_print=True, msg
         
         return -1, -1, -1
     else:
+        if do_print:
+            logging('')
+
         if do_torch_clear:
             torch.cuda.empty_cache()
         

@@ -19,6 +19,7 @@ class DEBUG:
     CHAIN = data['DEBUG']['CHAIN']
     CHAIN_TIME = data['DEBUG']['CHAIN_TIME']
     CHAIN_SERVER = data['DEBUG']['CHAIN_SERVER']
+    TRAIN = data['DEBUG']['TRAIN']
 
 
 ELASTICSEARCH_CONFIG = {
@@ -63,4 +64,20 @@ CHAIN_SERVER_CONFIG = {
 CHAIN_SERVER_CONFIG['url'] = f'http://{CHAIN_SERVER_CONFIG["host"]}:{CHAIN_SERVER_CONFIG["port"]}'
 CHAIN_SERVER_CONFIG['url_full_generate'] = f'{CHAIN_SERVER_CONFIG["url"]}{CHAIN_SERVER_CONFIG["url_generate"]}'
 CHAIN_SERVER_CONFIG['url_full_reset'] = f'{CHAIN_SERVER_CONFIG["url"]}{CHAIN_SERVER_CONFIG["url_reset"]}'
+
+
+MODEL_CONFIG = {
+    'model_name': data['MODEL_CONFIG']['MODEL_NAME'],
+    'dtype': data['MODEL_CONFIG']['DTYPE'],
+    'max_seq_length': data['MODEL_CONFIG']['MAX_SEQ_LENGTH'],
+    'lora_r': data['MODEL_CONFIG']['LORA_R'],
+    'lora_target_modules': data['MODEL_CONFIG']['LORA_TARGET_MODULES'],
+    'lora_alpha': data['MODEL_CONFIG']['LORA_ALPHA'],
+    'gradient_accumulation_steps': data['MODEL_CONFIG']['GRADIENT_ACCUMULATION_STEPS'],
+    'learning_rate': data['MODEL_CONFIG']['LEARNING_RATE'],
+    'epsilon': data['MODEL_CONFIG']['EPSILON'],
+    'kl_penalty': data['MODEL_CONFIG']['KL_PENALTY'],
+    'use_gradient_checkpointing': data['MODEL_CONFIG']['USE_GRADIENT_CHECKPOINTING'],
+    'resume_run_time': data['MODEL_CONFIG']['RESUME_RUN_TIME']
+}
 

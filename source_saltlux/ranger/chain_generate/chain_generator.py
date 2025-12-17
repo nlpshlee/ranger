@@ -20,7 +20,7 @@ class ChainGenerator:
         self._chain_generate_time = ChainGenerateTime()
 
         self._init_modules()
-        common_utils.check_gpu_memory(do_print=DEBUG.LOG, msg='[ChainGenerator init]')
+        common_utils.check_gpu_memory(do_print=DEBUG.CHAIN, msg='[ChainGenerator init]')
 
 
     def _init_modules(self):
