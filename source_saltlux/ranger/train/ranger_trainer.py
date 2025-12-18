@@ -242,6 +242,8 @@ class RangerTrainer:
         self.evaluate(test_datas, batch_size, n_chains, chain_depth)
 
         for epoch in range(1, epochs+1):
+            self._reset_epoch()
+
             self._logging(f'RangerTrainer.train() {epoch} epoch start : {common_utils.get_datetime_now()}\n')
             epoch_start = common_utils.get_time_ms()
 
@@ -264,13 +266,14 @@ class RangerTrainer:
                     self._adapter_path
                 )
 
-                # print(f'len(datas_batch) : {len(datas_batch)}')
-                # print(f'batch_size : {batch_size}')
-                # print(f'len(query_results) : {len(query_results)}\n')
-                # __temp = [query_result.to_dict() for query_result in query_results]
-                # print(f'query_results :\n{json_utils.to_str(__temp)}')
+                # 2. 체인 별로 각각 리워드 계산
+                self._reward_calculator.calculate_reward(query_results)
 
-                # sys.exit(-1)
+                # print(
+                #     json_utils.to_str(
+                #         [query_result.to_dict() for query_result in query_results]
+                #     )
+                # )
 
 
 

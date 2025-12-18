@@ -82,3 +82,8 @@ MODEL_CONFIG = {
     'resume_run_time': data['MODEL_CONFIG']['RESUME_RUN_TIME']
 }
 
+
+REWARD_CONFIG = {
+    'reward_option': data['REWARD_CONFIG']['REWARD_OPTION']
+}
+
