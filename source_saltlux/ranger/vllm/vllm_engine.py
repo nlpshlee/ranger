@@ -40,13 +40,16 @@ class VllmEngine:
             max_model_len=self._max_seq_length, # 없으면, 에러남
             gpu_memory_utilization=self._gpu_memory_utilization,
             enable_lora=True,
-            enable_prefix_caching=False # 프리픽스 캐싱 활성화(속도 향상), 근데 한 번 어댑터 주면 캐싱되기 때문에 사용 X
-            # max_loras=1,
+            enable_prefix_caching=False, # 프리픽스 캐싱 활성화(속도 향상), 근데 한 번 어댑터 주면 캐싱되기 때문에 사용 X
+            max_loras=1
             # enforce_eager=True # CUDA Graph 비활성화 (속도는 조금 느려짐, 재현성은 높아짐), 해결 안됨
         )
 
         self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._model_name)
         self._tok_id_end = self._tokenizer.eos_token_id
+
+        # LoRA 어댑터 ID (매번 다르게 줘야 함. 1씩 증가해서 사용)
+        self._lora_id = 0
 
         # 검증 과정에서 재현이 필요한 경우에만 설정 (완벽한 재현은 안됨...)
         self._seed = -1
@@ -79,48 +82,41 @@ class VllmEngine:
 
     def _get_generated_text(self, completion_output: CompletionOutput) -> str:
         return completion_output.text.strip()
-    
 
-    def get_generated_log_prob(self, completion_output: CompletionOutput, text='', tok_ids=[], missing_log_prob=math.log(1e-9), return_all=False):
-        # 'text'가 주어지면, 'text'를 토크나이징하고 likelihood 계산
-        if len(text) > 0:
-            tok_ids: list = self._tokenizer(text, add_special_tokens=False)['input_ids']
-        # 'text'도 주어지지 않고, 'tok_ids'도 주어지지 않으면, 'completion_output'에 내장되어 있는 'tok_ids' 사용
-        elif len(tok_ids) == 0:
-            tok_ids: list = completion_output.token_ids
-        
-        if tok_ids[-1] != self._tok_id_end:
-            tok_ids.append(self._tok_id_end)
 
-        tok_log_probs = []
-        completion_output_log_prob_len = len(completion_output.logprobs)
+    def get_generated_log_prob(self, completion_output: CompletionOutput, return_all=False):
+        tok_ids = completion_output.token_ids
+        logprobs_list = completion_output.logprobs
 
-        for tok_idx in range(len(tok_ids)):
-            tok_id = tok_ids[tok_idx]
+        if not logprobs_list:
+            generated_log_prob = 0.0
+        else:
+            log_probs = []
 
-            # 모델이 생성한 텍스트보다 정답이 더 긴 경우
-            if completion_output_log_prob_len <= tok_idx:
-                tok_log_probs.append(missing_log_prob)
-                continue
+            for i, tok_id in enumerate(tok_ids):
+                if len(logprobs_list) <= i:
+                    break
 
-            # 'tok_idx'번째 위치에서의 전체 토큰 확률 분포 (실제로는 top-k)
-            all_tok_log_prob = completion_output.logprobs[tok_idx]
+                # 현재 토큰 위치에서의 top-k 로그 확률
+                tok_logprobs = logprobs_list[i]
 
-            if tok_id in all_tok_log_prob.keys():
-                tok_log_prob: Logprob = all_tok_log_prob[tok_id]
-                tok_log_prob = tok_log_prob.logprob
+                # top-k 안에 해당 토큰이 있다면 해당 토큰의 생성 확률 저장
+                if tok_id in tok_logprobs.keys():
+                    log_probs.append(tok_logprobs[tok_id].logprob)
+                # top-k 안에 해당 토큰이 없다면 (거의 가능성 제로)
+                else:
+                    pass
+
+            if len(log_probs) == 0:
+                generated_log_prob = 0.0
             else:
-                tok_log_prob = missing_log_prob
-            
-            tok_log_probs.append(tok_log_prob)
-        
-        log_prob = sum(tok_log_probs) / len(tok_log_probs)
+                generated_log_prob = sum(log_probs) / len(log_probs)
 
         if return_all:
             toks = [self._tokenizer.decode(tok_id) for tok_id in tok_ids]
-            return log_prob, toks, tok_ids, tok_log_probs
+            return generated_log_prob, toks, tok_ids, log_probs
         else:
-            return log_prob
+            return generated_log_prob
 
 
     def _make_generate_result(self, completion_output: CompletionOutput, return_completion_output: bool) -> Union[str, Tuple[str, Any]]:
@@ -136,7 +132,8 @@ class VllmEngine:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
-            lora_request = LoRARequest('RANGER_Policy', 1, adapter_path)
+            self._lora_id += 1
+            lora_request = LoRARequest('Ranger policy', self._lora_id, adapter_path)
         else:
             lora_request = None
         
