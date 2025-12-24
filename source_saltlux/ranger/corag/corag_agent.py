@@ -148,7 +148,8 @@ class CoragAgent:
         final_answer_completion_output_list = self._engine.generate_batch(
             datas=inputs,
             return_completion_output=True,
-            adapter_path=self._adapter_path
+            adapter_path=self._adapter_path,
+            temperature=0.0
         )
 
         idx = 0

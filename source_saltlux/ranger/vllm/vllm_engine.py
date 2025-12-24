@@ -128,7 +128,7 @@ class VllmEngine:
             return generated_text, completion_output
 
 
-    def generate_batch(self, datas: List[Dict], return_completion_output=False, adapter_path='') -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self, datas: List[Dict], return_completion_output=False, adapter_path='', temperature=-1) -> List[Union[str, Tuple[str, Any]]]:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
@@ -139,7 +139,7 @@ class VllmEngine:
         
         sampling_params = SamplingParams(
             max_tokens=self._max_new_tokens,
-            temperature=self._temperature,
+            temperature=self._temperature if temperature == -1 else temperature,
             logprobs=self._n_log_prob if return_completion_output else None
         )
 
