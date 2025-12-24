@@ -24,34 +24,30 @@ api = Api(app)
 
 class ChainGenerateServer(Resource):
     def post(self):
-        try:
-            req_json = request.get_json()
+        req_json = request.get_json()
 
-            # req_json.get() 함수의 마지막 인자는 디폴트 값
-            datas = req_json.get('datas', [])
-            batch_size = req_json.get('batch_size', 1)
-            n_chains = req_json.get('n_chains', 5)
-            chain_depth = req_json.get('chain_depth', 5)
-            adapter_path = req_json.get('adapter_path', '')
+        # req_json.get() 함수의 마지막 인자는 디폴트 값
+        datas = req_json.get('datas', [])
+        batch_size = req_json.get('batch_size', 1)
+        n_chains = req_json.get('n_chains', 5)
+        chain_depth = req_json.get('chain_depth', 5)
+        adapter_path = req_json.get('adapter_path', '')
 
-            results: List[List[QueryResult]] = chain_generator.generate(
-                datas=datas,
-                batch_size=batch_size,
-                n_chains=n_chains,
-                chain_depth=chain_depth,
-                adapter_path=adapter_path
-            )
+        results: List[List[QueryResult]] = chain_generator.generate(
+            datas=datas,
+            batch_size=batch_size,
+            n_chains=n_chains,
+            chain_depth=chain_depth,
+            adapter_path=adapter_path
+        )
 
-            serialized_results = self._serialize(results)
-            
-            return jsonify({
-                'status': 'success',
-                'count': len(serialized_results),
-                'results': serialized_results
-            })
-        except Exception as e:
-            if DEBUG.ERROR:
-                print(f'# [ERROR][CHAIN_SERVER] error msg : {e}\n')
+        serialized_results = self._serialize(results)
+        
+        return jsonify({
+            'status': 'success',
+            'count': len(serialized_results),
+            'results': serialized_results
+        })
 
 
     def _serialize(self, results: List[List[QueryResult]]):
