@@ -31,7 +31,7 @@ VLLM_CONFIG:
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
   MAX_NEW_TOKENS: 128
-  TEMPERATURE: 0.7
+  TEMPERATURE: 0.9
   GPU_MEMORY_UTILIZATION: 0.9
   N_LOG_PROB: 20 # 고정해도 무방
 
@@ -54,11 +54,11 @@ MODEL_CONFIG:
   MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
-  LORA_R: 8
-  LORA_TARGET_MODULES: ['q_proj', 'k_proj', 'v_proj', 'o_proj']
-  LORA_ALPHA: 8
-  GRADIENT_ACCUMULATION_STEPS: 16
-  LEARNING_RATE: 0.0001 # '0.00005 ~ 0.0002' 튜닝 필요
+  LORA_R: 16
+  LORA_TARGET_MODULES: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
+  LORA_ALPHA: 32
+  GRADIENT_ACCUMULATION_STEPS: 1
+  LEARNING_RATE: 0.0002 # '0.00005 ~ 0.0002' 튜닝 필요
   EPSILON: 0.2 # '0.2'로 고정해도 무방 (모델이 한 번의 업데이트에서 너무 급격하게 변하지 않도록 안전 장치를 거는 비율)
   KL_PENALTY: 0.01 # '0.01 ~ 0.05' (참조 모델과 너무 달라지지 않도록 하는 규제)
   USE_GRADIENT_CHECKPOINTING: false
