@@ -1,6 +1,6 @@
 from _init import *
 
-import shutil, wandb
+import shutil, wandb, re
 from typing import List
 import numpy as np
 
@@ -86,6 +86,8 @@ class RangerTrainer:
         self._resume_checkpoint_path = ''
         self._resume_optimizer_path = ''
         self._resume_adapter_path = ''
+        self._resume_epoch, self._resume_batch = -1, -1
+
         if self._resume_run_time:
             self._resume_checkpoint_path = f'{self._out_dir}/checkpoint_{self._resume_run_time}'
             self._resume_optimizer_path = f'{self._resume_checkpoint_path}/optimizer.pt'
@@ -94,8 +96,10 @@ class RangerTrainer:
             # 파일 복사는 오직 메인 프로세스만 수행 (안 그러면 서로 만들다가 충돌남)
             if self._accelerator.is_main_process:
                 self._copy_from_resume()
+            self._accelerator.wait_for_everyone()
 
-        self._accelerator.wait_for_everyone()
+            if os.path.exists(self._checkpoint_history_path):
+                self._set_resume_epoch_batch(self._checkpoint_history_path)
 
 
     def _copy_from_resume(self):
@@ -107,11 +111,27 @@ class RangerTrainer:
                 os.makedirs(self._checkpoint_path, exist_ok=True)
                 shutil.copy2(resume_checkpoint_history_path, self._checkpoint_history_path)
                 self._logging(f'RangerTrainer._copy_from_resume() [{resume_checkpoint_history_path}] -> [{self._checkpoint_history_path}]', True)
-        
+
         # 어댑터는 전체 복사
         if os.path.exists(self._resume_adapter_path):
             shutil.copytree(self._resume_adapter_path, self._adapter_path)
             self._logging(f'RangerTrainer._copy_from_resume() [{self._resume_adapter_path}] -> [{self._adapter_path}]', True)
+
+
+    def _set_resume_epoch_batch(self, history_path: str):
+        with open(history_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+            if lines:
+                last_line = lines[-1].strip()
+                pattern = re.compile(r'(\d+)\s*epoch,\s*(\d+)\s*batch')
+                match = pattern.search(last_line)
+
+                if match:
+                    self._resume_epoch = int(match.group(1))
+                    self._resume_batch = int(match.group(2))
+            
+            self._logging(f'RangerTrainer._get_resume_epoch_batch() resume point : [ {self._resume_epoch} epoch, {self._resume_batch} batch ]', True)
 
 
     def _init_model(self):
@@ -389,6 +409,11 @@ class RangerTrainer:
         train_start = common_utils.get_time_ms()
 
         for epoch in range(1, epochs+1):
+            if epoch < self._resume_epoch:
+                continue
+            else:
+                self._resume_epoch = -1
+
             epoch_start = common_utils.get_time_ms()
 
             if self._accelerator.is_main_process:
@@ -399,6 +424,11 @@ class RangerTrainer:
             batch_len = (train_size + batch_size - 1) // batch_size
 
             for batch_idx, datas_batch in enumerate(container_utils.chunks(train_datas, batch_size)):
+                if (batch_idx+1) <= self._resume_batch:
+                    if (batch_idx+1) == self._resume_batch:
+                        self._resume_batch = -1
+                    continue
+
                 self._logging(f'RangerTrainer.train() {epoch} epoch, {batch_idx+1} batch start\t: {common_utils.get_datetime_now()}')
                 batch_start = common_utils.get_time_ms()
 
