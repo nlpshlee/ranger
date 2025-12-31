@@ -1,4 +1,4 @@
-import time, torch, pynvml
+import time, torch, pynvml, gc
 from datetime import datetime
 
 from ranger.utils.common_const import *
@@ -94,4 +94,9 @@ def check_gpu_memory(devices: list=None, do_torch_clear=True, do_print=True, msg
         pynvml.nvmlShutdown()
 
         return total_all, used_all, free_all
+
+
+def clear_gpu_memory():
+    gc.collect()
+    torch.cuda.empty_cache()
 

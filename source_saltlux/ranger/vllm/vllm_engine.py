@@ -1,12 +1,10 @@
 from _init import *
 
-import math
 from typing import List, Dict, Union, Tuple, Any
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from vllm import LLM, SamplingParams
 from vllm.outputs import RequestOutput, CompletionOutput
-from vllm.sequence import Logprob
 from vllm.lora.request import LoRARequest
 
 
@@ -41,7 +39,8 @@ class VllmEngine:
             gpu_memory_utilization=self._gpu_memory_utilization,
             enable_lora=True,
             enable_prefix_caching=False, # 프리픽스 캐싱 활성화(속도 향상), 근데 한 번 어댑터 주면 캐싱되기 때문에 사용 X
-            max_loras=1
+            max_loras=1,
+            max_lora_rank=MODEL_CONFIG['lora_r']
             # enforce_eager=True # CUDA Graph 비활성화 (속도는 조금 느려짐, 재현성은 높아짐), 해결 안됨
         )
 

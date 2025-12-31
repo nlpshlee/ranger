@@ -432,11 +432,15 @@ class RangerTrainer:
                         - 애초에 멀티 GPU 환경에서 사용되는 라이브러리
                         - RANGER 처럼 배치를 1로 하는 경우, 직접 카운팅해서 제어해야 함
                 '''
-                is_update_step = (batch_idx+1) % self._gradient_accumulation_steps == 0
+                is_update_step = ((batch_idx+1) % self._gradient_accumulation_steps) == 0
                 is_last_step = (batch_idx+1) == batch_len
 
                 # 여기는 메인 프로세스로 실행 X (내부적으로 알아서 동기화해서 파라미터 업데이트한다고 함)
-                if is_update_step or is_last_step:
+                if (self._gradient_accumulation_steps == 1) or is_update_step or is_last_step:
+                    if self._accelerator.is_main_process:
+                        common_utils.clear_gpu_memory()
+                        common_utils.check_gpu_memory(do_print=DEBUG.TRAIN, msg=f'[{self._device}][Cleaned GPU]')
+
                     # 누적된 gradient 를 한 번에 반영해야 하므로, 먼저 step() 호출하고 다음에 zero_grad() 호출
                     self._optimizer.step()
                     self._optimizer.zero_grad()
@@ -466,6 +470,10 @@ class RangerTrainer:
 
 
     def evaluate(self, epoch, datas, batch_size, n_chains, chain_depth):
+        if self._accelerator.is_main_process:
+            self._reset_epoch()
+        self._accelerator.wait_for_everyone()
+
         prefix = '[base]' if epoch == 0 else f'[{epoch} epoch]'
         data_size = len(datas)
 

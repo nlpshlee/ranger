@@ -77,6 +77,9 @@ if DEBUG.CHAIN_SERVER:
 
 '''
     CUDA_VISIBLE_DEVICES=0 python -u -m chain_generate.chain_generate_server > ./logs/chain_generate_server.log
+
+    # 포트 확인
+    sudo lsof -i :7200
 '''
 if __name__ == '__main__':
     host = CHAIN_SERVER_CONFIG['host']
