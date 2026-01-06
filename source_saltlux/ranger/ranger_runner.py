@@ -51,7 +51,7 @@ ranger_trainer = RangerTrainer(
 epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
 
 wandb.init(
-    project=f'RANGER-Training-260102-1',
+    project=f'RANGER-Training-260106-2',
     config={
         'model_name': VLLM_CONFIG['model_name'],
         'max_seq_length': VLLM_CONFIG['max_seq_length'],

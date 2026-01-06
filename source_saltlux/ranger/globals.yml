@@ -31,9 +31,9 @@ VLLM_CONFIG:
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
   MAX_NEW_TOKENS: 128
-  TEMPERATURE: 0.9
+  TEMPERATURE: 1.2 # RL을 위해 임시로 높은 값 설정
   GPU_MEMORY_UTILIZATION: 0.9
-  N_LOG_PROB: 20 # 고정해도 무방
+  N_LOG_PROB: 1 # 상위 N개 토큰의 확률 (최대 20)
 
 
 CORAG_CONFIG:
@@ -54,17 +54,17 @@ MODEL_CONFIG:
   MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
-  LORA_R: 16
+  LORA_R: 128
   LORA_TARGET_MODULES: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
-  LORA_ALPHA: 32
-  GRADIENT_ACCUMULATION_STEPS: 1
+  LORA_ALPHA: 128
+  GRADIENT_ACCUMULATION_STEPS: 64
   LEARNING_RATE: 0.0002 # '0.00005 ~ 0.0002' 튜닝 필요
   EPSILON: 0.2 # '0.2'로 고정해도 무방 (모델이 한 번의 업데이트에서 너무 급격하게 변하지 않도록 안전 장치를 거는 비율)
   KL_PENALTY: 0.01 # '0.01 ~ 0.05' (참조 모델과 너무 달라지지 않도록 하는 규제)
-  USE_GRADIENT_CHECKPOINTING: false
+  USE_GRADIENT_CHECKPOINTING: true # 'true'인 경우, 메모리는 절약, 학습 속도는 느려짐
   RESUME_RUN_TIME: false # (Ex. '2025-12-03-07-13-16')
 
 
 REWARD_CONFIG:
-  REWARD_OPTION: 7 # CORRECT:1, LENGTH:2, CORRECT+LENGTH:3 CONFIDENCE:4, ... ALL:7
+  REWARD_OPTION: 3 # CORRECT:1, LENGTH:2, CORRECT+LENGTH:3 CONFIDENCE:4, ... ALL:7
 

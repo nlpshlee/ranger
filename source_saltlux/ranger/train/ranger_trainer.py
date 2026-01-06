@@ -278,14 +278,17 @@ class RangerTrainer:
 
         # 마지막 logit 제거 (다음 토큰이 없으므로)
         shifted_logits = logits[:, :-1, :]
+        del logits
 
         # 정답 토큰 ID도 위치를 맞춤 (맨 앞 토큰 제거)
         shifted_target_ids = input_ids[:, 1:]
 
         all_log_probs = log_softmax(shifted_logits, dim=-1)
+        del shifted_logits
 
         # 실제 정답 토큰 ID에 해당하는 log 확률만 추출
         log_probs = torch.gather(all_log_probs, 2, shifted_target_ids.unsqueeze(-1)).squeeze(-1)
+        del all_log_probs
 
         return log_probs
 
@@ -393,6 +396,9 @@ class RangerTrainer:
 
         self._accelerator.backward(loss_to_backward)
 
+        # reference_log_probs는 detach된 텐서라 명시적으로 지워주는 것이 좋음
+        del reference_log_probs
+
         # log 용으로는 원래 loss 반환
         return batch_loss.item()
 
@@ -431,6 +437,7 @@ class RangerTrainer:
                 if (batch_idx+1) <= self._resume_batch:
                     if (batch_idx+1) == self._resume_batch:
                         self._resume_batch = -1
+                        self._global_step = ((epoch-1) * train_size) + (batch_idx+1)
                     continue
 
                 self._logging(f'RangerTrainer.train() {epoch} epoch, {batch_idx+1} batch start\t: {common_utils.get_datetime_now()}')
@@ -469,12 +476,12 @@ class RangerTrainer:
                 is_update_step = ((batch_idx+1) % self._gradient_accumulation_steps) == 0
                 is_last_step = (batch_idx+1) == batch_len
 
+                if self._accelerator.is_main_process:
+                    common_utils.clear_gpu_memory()
+                    common_utils.check_gpu_memory(do_print=DEBUG.TRAIN, msg=f'[{self._device}][Cleaned GPU]')
+
                 # 여기는 메인 프로세스로 실행 X (내부적으로 알아서 동기화해서 파라미터 업데이트한다고 함)
                 if (self._gradient_accumulation_steps == 1) or is_update_step or is_last_step:
-                    if self._accelerator.is_main_process:
-                        common_utils.clear_gpu_memory()
-                        common_utils.check_gpu_memory(do_print=DEBUG.TRAIN, msg=f'[{self._device}][Cleaned GPU]')
-
                     # 누적된 gradient 를 한 번에 반영해야 하므로, 먼저 step() 호출하고 다음에 zero_grad() 호출
                     self._optimizer.step()
                     self._optimizer.zero_grad()
