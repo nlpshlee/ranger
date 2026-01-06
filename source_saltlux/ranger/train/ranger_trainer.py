@@ -291,6 +291,10 @@ class RangerTrainer:
 
 
     def _calculate_loss_per_batch(self, reference_log_probs, policy_log_probs, all_advantage_tensor, all_query_len, attention_mask):
+        # FP16 오버플로우 방지를 위해 강제로 float32로 변환
+        reference_log_probs = reference_log_probs.to(torch.float32)
+        policy_log_probs = policy_log_probs.to(torch.float32)
+
         # r(i) 값 계산
         log_ratio = policy_log_probs - policy_log_probs.detach()
         ratio = torch.exp(log_ratio)

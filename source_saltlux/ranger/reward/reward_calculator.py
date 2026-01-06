@@ -24,10 +24,11 @@ class RewardCalculator:
         temp_rewards = []
 
         if common_utils.check_option(self._reward_option, RewardOption.CORRECT):
-            temp_rewards.append(chain_result._f1)
+            temp_rewards.append(max(0.0, chain_result._f1))
 
         if common_utils.check_option(self._reward_option, RewardOption.LENGTH):
-            generated_chain_depth = len(chain_result._final_answers)
+            hop = max(1.0, hop) # test 데이터에는 hop 정보가 없어서 '-1'인 상황 발생
+            generated_chain_depth = max(1.0, len(chain_result._final_answers))
 
             '''
                 hop=2, generated_chain_depth=1 -> 1.0
@@ -55,18 +56,15 @@ class RewardCalculator:
                 - 'correct'가 keeper 역할
                     - 정답을 아예 틀렸는데, 길이가 짧고 확신했다고 리워드가 높으면 안되기 때문
                     - 길이가 길고 확신을 못했다고 해도, 정답을 맞췄으면 어느정도 보장된 리워드가 제공되어야 함
+            
+            근데, 정답은 못 맞췄는데 너무 확신하면 리워드가 제공되기 때문에, 확신도는 일단 제거
 
-            전부 곱하면서 값이 너무 작아지는 것을 '기하 평균'을 이용하여 완화
+            전부 곱하면서 값이 너무 작아지는 것을 '기하 평균'을 이용하여 완화 -> 이것도 음수에 대한 제곱근 처리 때문에 제거
                 A x B x C -> n(3)_루트(A x B x C)
         '''
         mul_reward = math.prod(temp_rewards)
 
-        # 전부 곱한 값이 '0'이라면, 'correct(f1)'가 '0'인 경우임 (나머지는 '0'이 될 수 없음) -> 강한 패널티
-        if mul_reward == 0.0:
-            return 0.0
-        
-        # 모든 부분 리워드의 곱을 기하 평균으로 반환
-        return mul_reward ** (1.0 / len(temp_rewards))
+        return mul_reward
 
 
     def calculate_reward(self, query_results: List[QueryResult]):
@@ -80,5 +78,8 @@ class RewardCalculator:
             chain_results: List[ChainResult] = query_result._chain_results
             for chain_result in chain_results:
                 reward = self._calculate_chain_reward(chain_result, query_result._hop)
-                chain_result._reward = reward
+                if isinstance(reward, complex):
+                    reward = reward.real
+
+                chain_result._reward = float(max(0.0, reward))
 

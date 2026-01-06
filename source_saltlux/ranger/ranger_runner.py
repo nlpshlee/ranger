@@ -51,7 +51,7 @@ ranger_trainer = RangerTrainer(
 epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
 
 wandb.init(
-    project=f'RANGER-Training-251225-2',
+    project=f'RANGER-Training-260102-1',
     config={
         'model_name': VLLM_CONFIG['model_name'],
         'max_seq_length': VLLM_CONFIG['max_seq_length'],
@@ -72,13 +72,15 @@ wandb.init(
 
 
 ranger_trainer.train(
-    train_datas[:10], train_datas[:10],
+    train_datas, test_datas,
     epochs, batch_size, n_chains, chain_depth
 )
 
 
 
 '''
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
     CUDA_VISIBLE_DEVICES=1 python -u ranger_runner.py > ./logs/ranger_runner.log
 
     CUDA_VISIBLE_DEVICES=1 PYTHONUNBUFFERED=1 accelerate launch  --num_processes=1  --num_machines=1  --mixed_precision=no  --dynamo_backend=no  ranger_runner.py > ./logs/ranger_runner.log
