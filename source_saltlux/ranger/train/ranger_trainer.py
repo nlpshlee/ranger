@@ -278,19 +278,23 @@ class RangerTrainer:
 
         # 마지막 logit 제거 (다음 토큰이 없으므로)
         shifted_logits = logits[:, :-1, :]
-        del logits
+        del logits, outputs
+        common_utils.clear_gpu_memory()
+
+        # log softmax 변환
+        log_probs = log_softmax(shifted_logits, dim=-1)
+        del shifted_logits
+        common_utils.clear_gpu_memory()
 
         # 정답 토큰 ID도 위치를 맞춤 (맨 앞 토큰 제거)
         shifted_target_ids = input_ids[:, 1:]
 
-        all_log_probs = log_softmax(shifted_logits, dim=-1)
-        del shifted_logits
-
         # 실제 정답 토큰 ID에 해당하는 log 확률만 추출
-        log_probs = torch.gather(all_log_probs, 2, shifted_target_ids.unsqueeze(-1)).squeeze(-1)
-        del all_log_probs
+        target_log_probs = torch.gather(log_probs, 2, shifted_target_ids.unsqueeze(-1)).squeeze(-1)
+        del log_probs
+        common_utils.clear_gpu_memory()
 
-        return log_probs
+        return target_log_probs
 
 
     def _calculate_loss_per_batch(self, reference_log_probs, policy_log_probs, all_advantage_tensor, all_query_len, attention_mask):

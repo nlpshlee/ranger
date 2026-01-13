@@ -1,7 +1,14 @@
-import time, torch, pynvml, gc
+import random, time, torch, pynvml, gc
 from datetime import datetime
 
 from ranger.utils.common_const import *
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    logging(f'# common_util.set_seed() seed : {seed}\n')
 
 
 def logging(msg: str, option=LOG_OPTION.STDOUT):

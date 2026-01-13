@@ -4,9 +4,13 @@ from typing import List
 from flask import Flask, request, jsonify
 from flask_restful import Api, Resource
 
-from ranger.utils import json_utils
-from ranger.corag.corag_result import QueryResult, ChainResult
+from ranger.utils import common_utils, json_utils
+from ranger.corag.corag_result import QueryResult
 from ranger.chain_generate.chain_generator import ChainGenerator
+
+
+seed = 42
+common_utils.set_seed(seed)
 
 
 if DEBUG.CHAIN_SERVER:

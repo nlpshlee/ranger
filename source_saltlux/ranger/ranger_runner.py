@@ -2,19 +2,13 @@ from _init import *
 
 import random, torch, wandb
 
-from ranger.utils import json_utils
+from ranger.utils import common_utils, json_utils
 from ranger.reward.reward_calculator import RewardCalculator
 from ranger.train.ranger_trainer import RangerTrainer
 
 
-def set_seed(seed: int):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    random.seed(seed)
-    print(f'set_seed() seed : {seed}\n')
-
 seed = 42
-set_seed(seed)
+common_utils.set_seed(seed)
 
 
 def datas_shuffle(datas: list, seed: int):
@@ -51,7 +45,7 @@ ranger_trainer = RangerTrainer(
 epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
 
 wandb.init(
-    project=f'RANGER-Training-260106-2',
+    project=f'RANGER-Training-260113-1',
     config={
         'model_name': VLLM_CONFIG['model_name'],
         'max_seq_length': VLLM_CONFIG['max_seq_length'],
