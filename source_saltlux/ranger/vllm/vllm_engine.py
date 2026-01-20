@@ -1,11 +1,13 @@
 from _init import *
 
 from typing import List, Dict, Union, Tuple, Any
-from transformers import AutoTokenizer, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast
 
 from vllm import LLM, SamplingParams
 from vllm.outputs import RequestOutput, CompletionOutput
 from vllm.lora.request import LoRARequest
+
+from ranger.utils import tokenizer_utils
 
 
 class VllmEngine:
@@ -44,8 +46,7 @@ class VllmEngine:
             # enforce_eager=True # CUDA Graph 비활성화 (속도는 조금 느려짐, 재현성은 높아짐), 해결 안됨
         )
 
-        self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._model_name)
-        self._tok_id_end = self._tokenizer.eos_token_id
+        self._tokenizer: PreTrainedTokenizerFast = tokenizer_utils.load_tokenizer(self._model_name)
 
         # LoRA 어댑터 ID (매번 다르게 줘야 함. 1씩 증가해서 사용)
         self._lora_id = 0
@@ -56,27 +57,6 @@ class VllmEngine:
 
     def reset(self):
         self._called_cnt = 0
-
-
-    def _truncate_prompts(self, prompts: List[str]) -> List[str]:
-        truncated_prompts = []
-
-        for prompt in prompts:
-            token_ids = self._tokenizer(
-                prompt,
-                truncation=True,
-                max_length=self._max_seq_length,
-                add_special_tokens=True
-            )['input_ids']
-
-            if 'llama' in self._model_name.lower():
-                if len(token_ids) > 1 and token_ids[0] == token_ids[1] == 128000:
-                    token_ids = token_ids[1:]
-
-            truncated_prompt = self._tokenizer.decode(token_ids, skip_special_tokens=False)
-            truncated_prompts.append(truncated_prompt)
-        
-        return truncated_prompts
 
 
     def _get_generated_text(self, completion_output: CompletionOutput) -> str:
@@ -145,10 +125,8 @@ class VllmEngine:
         if self._seed != -1:
             sampling_params.seed = self._seed
 
-        prompts = [self._tokenizer.apply_chat_template(data, tokenize=False, add_generation_prompt=True) for data in datas]
-
         # vllm은 내부적으로 입력 길이 제한을 하지 않음 -> 직접 잘라서 넘겨줘야 함...
-        truncated_prompts = self._truncate_prompts(prompts)
+        prompts = tokenizer_utils.apply_chat_template_and_truncate(datas, self._tokenizer, self._max_seq_length)
 
         # LoRA Adapter 추가 코드
         '''
@@ -161,7 +139,7 @@ class VllmEngine:
                 - LoRA를 동적으로 적용하려면 반드시 llm.generate() 사용
         '''
         req_outputs: List[RequestOutput] = self._llm.generate(
-            truncated_prompts,
+            prompts,
             sampling_params=sampling_params,
             lora_request=lora_request,
             use_tqdm=False
