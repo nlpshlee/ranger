@@ -66,7 +66,7 @@ class CoragAgent:
                         past_subqueries=chain_result._sub_querys,
                         past_subanswers=chain_result._sub_answers,
                         task_desc=self._task_desc
-                    )[0] # get_generate_sub_query_prompt() 에서 [prompt] 형식으로 size '1'인 리스트로 반환함
+                    )
 
                     inputs.append(sub_query_prompt)
                     chain_result._sub_query_prompts.append(sub_query_prompt)
@@ -110,7 +110,7 @@ class CoragAgent:
                     sub_answer_prompt = corag_prompts.get_generate_intermediate_answer_prompt(
                         subquery=chain_result._sub_querys[-1],
                         documents=chain_result._docs_list[-1]
-                    )[0]
+                    )
 
                     inputs.append(sub_answer_prompt)
                     chain_result._sub_answer_prompts.append(sub_answer_prompt)
@@ -142,7 +142,7 @@ class CoragAgent:
                         past_subanswers=chain_result._sub_answers or [],
                         task_desc=self._task_desc,
                         documents=query_result._docs
-                    )[0]
+                    )
 
                     inputs.append(final_answer_prompt)
                     chain_result._final_answer_prompts.append(final_answer_prompt)

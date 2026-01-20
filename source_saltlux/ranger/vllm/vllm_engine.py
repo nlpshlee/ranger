@@ -127,7 +127,7 @@ class VllmEngine:
             return generated_text, completion_output
 
 
-    def generate_batch(self, datas: List[Dict], return_completion_output=False, adapter_path='', temperature=-1) -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self, datas: List[List[Dict]], return_completion_output=False, adapter_path='', temperature=-1) -> List[Union[str, Tuple[str, Any]]]:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
@@ -145,7 +145,7 @@ class VllmEngine:
         if self._seed != -1:
             sampling_params.seed = self._seed
 
-        prompts = [self._tokenizer.apply_chat_template([data], tokenize=False, add_generation_prompt=True) for data in datas]
+        prompts = [self._tokenizer.apply_chat_template(data, tokenize=False, add_generation_prompt=True) for data in datas]
 
         # vllm은 내부적으로 입력 길이 제한을 하지 않음 -> 직접 잘라서 넘겨줘야 함...
         truncated_prompts = self._truncate_prompts(prompts)
