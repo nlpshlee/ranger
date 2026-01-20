@@ -66,10 +66,10 @@ class CoragAgent:
                         past_subqueries=chain_result._sub_querys,
                         past_subanswers=chain_result._sub_answers,
                         task_desc=self._task_desc
-                    )
+                    )[0] # get_generate_sub_query_prompt() 에서 [prompt] 형식으로 size '1'인 리스트로 반환함
 
-                    # get_generate_sub_query_prompt() 에서 [prompt] 형식으로 size '1'인 리스트로 반환함
-                    inputs.append(sub_query_prompt[0])
+                    inputs.append(sub_query_prompt)
+                    chain_result._sub_query_prompts.append(sub_query_prompt)
 
         # 서브 쿼리 생성
         sub_querys = self._engine.generate_batch(
@@ -110,9 +110,10 @@ class CoragAgent:
                     sub_answer_prompt = corag_prompts.get_generate_intermediate_answer_prompt(
                         subquery=chain_result._sub_querys[-1],
                         documents=chain_result._docs_list[-1]
-                    )
+                    )[0]
 
-                    inputs.append(sub_answer_prompt[0])
+                    inputs.append(sub_answer_prompt)
+                    chain_result._sub_answer_prompts.append(sub_answer_prompt)
 
         sub_answers = self._engine.generate_batch(
             datas=inputs,
@@ -141,9 +142,10 @@ class CoragAgent:
                         past_subanswers=chain_result._sub_answers or [],
                         task_desc=self._task_desc,
                         documents=query_result._docs
-                    )
+                    )[0]
 
-                    inputs.append(final_answer_prompt[0])
+                    inputs.append(final_answer_prompt)
+                    chain_result._final_answer_prompts.append(final_answer_prompt)
         
         final_answer_completion_output_list = self._engine.generate_batch(
             datas=inputs,

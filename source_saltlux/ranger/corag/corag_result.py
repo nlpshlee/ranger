@@ -62,6 +62,10 @@ class ChainResult:
         self._em = -1
         self._f1 = -1
 
+        self._sub_query_prompts = []
+        self._sub_answer_prompts = []
+        self._final_answer_prompts = []
+
 
     def __str__(self):
         lines = []
