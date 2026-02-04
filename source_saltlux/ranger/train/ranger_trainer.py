@@ -8,11 +8,11 @@ import torch
 from torch.optim import AdamW
 from torch.nn.functional import log_softmax
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, PreTrainedTokenizerFast
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model
 from accelerate import Accelerator
 
-from ranger.utils import common_const, common_utils, json_utils, container_utils
+from ranger.utils import common_const, common_utils, json_utils, container_utils, tokenizer_utils
 from ranger.corag.corag_result import QueryResult, ChainResult
 from ranger.chain_generate.chain_generate_client import request_chain_generate, request_reset
 from ranger.reward.reward_calculator import RewardCalculator
@@ -32,7 +32,7 @@ class RangerTrainer:
 
         # 모델 관련 변수
         self._model: AutoModelForCausalLM = None
-        self._tokenizer: AutoTokenizer = None
+        self._tokenizer: PreTrainedTokenizerFast = None
         self._optimizer: AdamW = None
         self._accelerator = Accelerator(gradient_accumulation_steps=self._gradient_accumulation_steps)
         self._device = self._accelerator.device
@@ -148,9 +148,7 @@ class RangerTrainer:
         )
 
         # 2. 토크나이저 초기화
-        self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
-        if self._tokenizer.pad_token is None:
-            self._tokenizer.pad_token = self._tokenizer.eos_token
+        self._tokenizer: PreTrainedTokenizerFast = tokenizer_utils.load_tokenizer(self._model_name)
 
         # 3. Gradient Checkpointing
         if self._use_gradient_checkpointing:

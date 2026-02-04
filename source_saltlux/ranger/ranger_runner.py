@@ -1,6 +1,6 @@
 from _init import *
 
-import random, torch, wandb
+import random, wandb
 
 from ranger.utils import common_utils, json_utils
 from ranger.reward.reward_calculator import RewardCalculator

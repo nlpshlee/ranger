@@ -126,7 +126,8 @@ class VllmEngine:
             sampling_params.seed = self._seed
 
         # vllm은 내부적으로 입력 길이 제한을 하지 않음 -> 직접 잘라서 넘겨줘야 함...
-        prompts = tokenizer_utils.apply_chat_template_and_truncate(datas, self._tokenizer, self._max_seq_length)
+        prompt_token_ids_list = tokenizer_utils.tokenize_apply_chat_template_and_truncate(datas, self._tokenizer, self._max_seq_length)
+        vllm_inputs = [{'prompt_token_ids': prompt_token_ids} for prompt_token_ids in prompt_token_ids_list]
 
         # LoRA Adapter 추가 코드
         '''
@@ -139,7 +140,7 @@ class VllmEngine:
                 - LoRA를 동적으로 적용하려면 반드시 llm.generate() 사용
         '''
         req_outputs: List[RequestOutput] = self._llm.generate(
-            prompts,
+            prompts=vllm_inputs,
             sampling_params=sampling_params,
             lora_request=lora_request,
             use_tqdm=False
