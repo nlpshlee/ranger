@@ -34,9 +34,10 @@ VLLM_CONFIG:
   DEVICE: 0
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
-  MAX_NEW_TOKENS: 128
-  TEMPERATURE: 1.2 # RL을 위해 임시로 높은 값 설정
-  GPU_MEMORY_UTILIZATION: 0.9
+  MAX_NEW_TOKENS: 64
+  TEMPERATURE: 0.5 # RL을 위해 임시로 높은 값 설정
+  TOP_P: 0.95
+  GPU_MEMORY_UTILIZATION: 0.3
   N_LOG_PROB: 1 # 상위 N개 토큰의 확률 (최대 20)
 
 
@@ -58,7 +59,7 @@ MODEL_CONFIG:
   MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
-  LORA_R: 128
+  LORA_R: 64
   LORA_TARGET_MODULES: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
   LORA_ALPHA: 128
   GRADIENT_ACCUMULATION_STEPS: 64

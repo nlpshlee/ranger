@@ -48,6 +48,7 @@ VLLM_CONFIG = {
     'max_seq_length': data['VLLM_CONFIG']['MAX_SEQ_LENGTH'],
     'max_new_tokens': data['VLLM_CONFIG']['MAX_NEW_TOKENS'],
     'temperature': data['VLLM_CONFIG']['TEMPERATURE'],
+    'top_p': data['VLLM_CONFIG']['TOP_P'],
     'gpu_memory_utilization': data['VLLM_CONFIG']['GPU_MEMORY_UTILIZATION'],
     'n_log_prob': data['VLLM_CONFIG']['N_LOG_PROB']
 }

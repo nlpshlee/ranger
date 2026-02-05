@@ -12,7 +12,7 @@ from ranger.utils import tokenizer_utils
 
 class VllmEngine:
     def __init__(self, model_name: str, device: str, dtype: str, max_seq_length: int, max_new_tokens: int,
-                 temperature: float, gpu_memory_utilization: float, n_log_prob: int):
+                 temperature: float, top_p: float, gpu_memory_utilization: float, n_log_prob: int):
 
         self._model_name = model_name
         self._device = device
@@ -20,6 +20,7 @@ class VllmEngine:
         self._max_seq_length = max_seq_length
         self._max_new_tokens = max_new_tokens
         self._temperature = temperature
+        self._top_p = top_p
         self._gpu_memory_utilization = gpu_memory_utilization
         self._n_log_prob = n_log_prob
 
@@ -107,7 +108,7 @@ class VllmEngine:
             return generated_text, completion_output
 
 
-    def generate_batch(self, datas: List[List[Dict]], return_completion_output=False, adapter_path='', temperature=-1) -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self, datas: List[List[Dict]], return_completion_output=False, adapter_path='', temperature=-1, top_p=-1) -> List[Union[str, Tuple[str, Any]]]:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
@@ -119,6 +120,7 @@ class VllmEngine:
         sampling_params = SamplingParams(
             max_tokens=self._max_new_tokens,
             temperature=self._temperature if temperature == -1 else temperature,
+            top_p=self._top_p if top_p == -1 else top_p,
             logprobs=self._n_log_prob if return_completion_output else None
         )
 

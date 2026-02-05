@@ -34,6 +34,7 @@ class ChainGenerator:
             max_seq_length=self._vllm_config['max_seq_length'],
             max_new_tokens=self._vllm_config['max_new_tokens'],
             temperature=self._vllm_config['temperature'],
+            top_p=self._vllm_config['top_p'],
             gpu_memory_utilization=self._vllm_config['gpu_memory_utilization'],
             n_log_prob=self._vllm_config['n_log_prob']
         )
