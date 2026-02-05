@@ -7,7 +7,7 @@ from ranger.reward.reward_calculator import RewardCalculator
 from ranger.train.ranger_trainer import RangerTrainer
 
 
-seed = 42
+seed = COMMON_CONFIG['seed']
 common_utils.set_seed(seed)
 
 

@@ -23,6 +23,11 @@ class DEBUG:
     TRAIN = data['DEBUG']['TRAIN']
 
 
+COMMON_CONFIG = {
+    'seed': data['COMMON_CONFIG']['SEED']
+}
+
+
 ELASTICSEARCH_CONFIG = {
     'host': data['ELASTICSEARCH_CONFIG']['HOST'],
     'port': data['ELASTICSEARCH_CONFIG']['PORT']

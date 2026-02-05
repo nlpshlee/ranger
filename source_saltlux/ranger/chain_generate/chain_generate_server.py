@@ -9,7 +9,7 @@ from ranger.corag.corag_result import QueryResult
 from ranger.chain_generate.chain_generator import ChainGenerator
 
 
-seed = 42
+seed = COMMON_CONFIG['seed']
 common_utils.set_seed(seed)
 
 
@@ -20,6 +20,7 @@ if DEBUG.CHAIN_SERVER:
 
 # 1. ChainGenerator 초기화 (서버 시작 시 1회만 실행됨)
 chain_generator = ChainGenerator(VLLM_CONFIG, CORAG_CONFIG)
+chain_generator._engine._seed = seed
 
 # 2. Flask App 및 API 정의
 app = Flask(__name__)

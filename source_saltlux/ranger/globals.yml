@@ -12,6 +12,10 @@ DEBUG:
   TRAIN: true
 
 
+COMMON_CONFIG:
+  SEED: 42
+
+
 # elasticsearch-7.10.1/config/elasticsearch.yml
 ELASTICSEARCH_CONFIG:
   HOST: '127.0.0.1'
