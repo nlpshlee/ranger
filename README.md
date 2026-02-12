@@ -15,6 +15,11 @@ pip install torch==2.6.0+cu124 torchvision torchaudio --index-url https://downlo
 
 라이브러리 설치
 ```bash
+pip install elasticsearch==7.10.1
+pip install ninja packaging
+pip install psutil
+pip install flash-attn==2.7.0.post2 --no-build-isolation
+
 pip install -r requirements.txt
 ```
 
@@ -29,11 +34,6 @@ pip install --no-deps unsloth vllm==0.8.5.post1
 pip install --no-deps bitsandbytes accelerate peft trl==0.15.2 triton cut_cross_entropy unsloth_zoo
 pip install sentencepiece "datasets>=3.4.1" huggingface_hub hf_transfer
 ``` -->
-
-Elasticsearch 설치 (클라이언트)
-```bash
-pip install elasticsearch==7.10.1
-```
 
 Elasticsearch 설치 (서버)
 ```bash
