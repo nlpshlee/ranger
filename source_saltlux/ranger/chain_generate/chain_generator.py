@@ -35,6 +35,7 @@ class ChainGenerator:
             max_new_tokens=self._vllm_config['max_new_tokens'],
             temperature=self._vllm_config['temperature'],
             top_p=self._vllm_config['top_p'],
+            top_k=self._vllm_config['top_k'],
             gpu_memory_utilization=self._vllm_config['gpu_memory_utilization'],
             n_log_prob=self._vllm_config['n_log_prob']
         )
@@ -55,7 +56,7 @@ class ChainGenerator:
         self._chain_generate_time.reset()
 
 
-    def generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='') -> List[List[QueryResult]]:
+    def generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9) -> List[List[QueryResult]]:
         results = []
 
         for i, datas_batch in enumerate(container_utils.chunks(datas, batch_size)):
@@ -65,7 +66,10 @@ class ChainGenerator:
                 datas=datas_batch,
                 n_chains=n_chains,
                 chain_depth=chain_depth,
-                adapter_path=adapter_path
+                adapter_path=adapter_path,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k
             )
 
             results.append(query_results)

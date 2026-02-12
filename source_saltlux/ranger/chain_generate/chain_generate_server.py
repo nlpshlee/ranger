@@ -37,13 +37,19 @@ class ChainGenerateServer(Resource):
         n_chains = req_json.get('n_chains', 5)
         chain_depth = req_json.get('chain_depth', 5)
         adapter_path = req_json.get('adapter_path', '')
+        temperature = req_json.get('temperature', -9)
+        top_p = req_json.get('top_p', -9)
+        top_k = req_json.get('top_k', -9)
 
         results: List[List[QueryResult]] = chain_generator.generate(
             datas=datas,
             batch_size=batch_size,
             n_chains=n_chains,
             chain_depth=chain_depth,
-            adapter_path=adapter_path
+            adapter_path=adapter_path,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k
         )
 
         serialized_results = self._serialize(results)

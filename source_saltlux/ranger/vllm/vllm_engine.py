@@ -12,7 +12,7 @@ from ranger.utils import tokenizer_utils
 
 class VllmEngine:
     def __init__(self, model_name: str, device: str, dtype: str, max_seq_length: int, max_new_tokens: int,
-                 temperature: float, top_p: float, gpu_memory_utilization: float, n_log_prob: int):
+                 temperature: float, top_p: float, top_k: int, gpu_memory_utilization: float, n_log_prob: int):
 
         self._model_name = model_name
         self._device = device
@@ -21,6 +21,7 @@ class VllmEngine:
         self._max_new_tokens = max_new_tokens
         self._temperature = temperature
         self._top_p = top_p
+        self._top_k = top_k
         self._gpu_memory_utilization = gpu_memory_utilization
         self._n_log_prob = n_log_prob
 
@@ -53,7 +54,7 @@ class VllmEngine:
         self._lora_id = 0
 
         # 검증 과정에서 재현이 필요한 경우에만 설정 (완벽한 재현은 안됨...)
-        self._seed = -1
+        self._seed = -9
 
 
     def reset(self):
@@ -108,7 +109,7 @@ class VllmEngine:
             return generated_text, completion_output
 
 
-    def generate_batch(self, datas: List[List[Dict]], return_completion_output=False, adapter_path='', temperature=-1, top_p=-1) -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self, datas: List[List[Dict]], return_completion_output=False, adapter_path='', temperature=-9, top_p=-9, top_k=-9) -> List[Union[str, Tuple[str, Any]]]:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
@@ -119,12 +120,13 @@ class VllmEngine:
         
         sampling_params = SamplingParams(
             max_tokens=self._max_new_tokens,
-            temperature=self._temperature if temperature == -1 else temperature,
-            top_p=self._top_p if top_p == -1 else top_p,
+            temperature=self._temperature if temperature == -9 else temperature,
+            top_p=self._top_p if top_p == -9 else top_p,
+            top_k=self._top_k if top_k == -9 else top_k,
             logprobs=self._n_log_prob if return_completion_output else None
         )
 
-        if self._seed != -1:
+        if self._seed != -9:
             sampling_params.seed = self._seed
 
         # vllm은 내부적으로 입력 길이 제한을 하지 않음 -> 직접 잘라서 넘겨줘야 함...

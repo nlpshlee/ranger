@@ -21,6 +21,7 @@ class DEBUG:
     CHAIN_SERVER = data['DEBUG']['CHAIN_SERVER']
     CHAIN_CLIENT = data['DEBUG']['CHAIN_CLIENT']
     TRAIN = data['DEBUG']['TRAIN']
+    EVAL = data['DEBUG']['EVAL']
 
 
 COMMON_CONFIG = {
@@ -49,6 +50,7 @@ VLLM_CONFIG = {
     'max_new_tokens': data['VLLM_CONFIG']['MAX_NEW_TOKENS'],
     'temperature': data['VLLM_CONFIG']['TEMPERATURE'],
     'top_p': data['VLLM_CONFIG']['TOP_P'],
+    'top_k': data['VLLM_CONFIG']['TOP_K'],
     'gpu_memory_utilization': data['VLLM_CONFIG']['GPU_MEMORY_UTILIZATION'],
     'n_log_prob': data['VLLM_CONFIG']['N_LOG_PROB']
 }

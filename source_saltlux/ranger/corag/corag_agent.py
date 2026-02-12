@@ -31,6 +31,9 @@ class CoragAgent:
 
         self._batch_idx = 0
         self._adapter_path: str
+        self._temperature: float
+        self._top_p: float
+        self._top_k: int
 
 
     def reset(self):
@@ -75,7 +78,10 @@ class CoragAgent:
         sub_querys = self._engine.generate_batch(
             datas=inputs,
             return_completion_output=False,
-            adapter_path=self._adapter_path
+            adapter_path=self._adapter_path,
+            temperature=self._temperature,
+            top_p=self._top_p,
+            top_k=self._top_k
         )
 
         idx = 0
@@ -118,7 +124,10 @@ class CoragAgent:
         sub_answers = self._engine.generate_batch(
             datas=inputs,
             return_completion_output=False,
-            adapter_path=self._adapter_path
+            adapter_path=self._adapter_path,
+            temperature=self._temperature,
+            top_p=self._top_p,
+            top_k=self._top_k
         )
         
         idx = 0
@@ -151,7 +160,9 @@ class CoragAgent:
             datas=inputs,
             return_completion_output=True,
             adapter_path=self._adapter_path,
-            temperature=0.0
+            temperature=0.0,
+            top_p=1.0,
+            top_k=-1
         )
 
         idx = 0
@@ -215,9 +226,12 @@ class CoragAgent:
         return count
 
 
-    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path: str) -> List[QueryResult]:
+    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9) -> List[QueryResult]:
         self._batch_idx += 1
         self._adapter_path = adapter_path
+        self._temperature = temperature
+        self._top_p = top_p
+        self._top_k = top_k
 
         # 각 쿼리에 대한 결과 객체 초기화
         query_results = []

@@ -10,6 +10,7 @@ DEBUG:
   CHAIN_SERVER: true
   CHAIN_CLIENT: false
   TRAIN: true
+  EVAL: true
 
 
 COMMON_CONFIG:
@@ -37,6 +38,7 @@ VLLM_CONFIG:
   MAX_NEW_TOKENS: 64
   TEMPERATURE: 0.5 # RL을 위해 임시로 높은 값 설정
   TOP_P: 0.95
+  TOP_K: -1
   GPU_MEMORY_UTILIZATION: 0.3
   N_LOG_PROB: 1 # 상위 N개 토큰의 확률 (최대 20)
 
