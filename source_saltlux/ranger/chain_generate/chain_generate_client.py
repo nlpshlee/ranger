@@ -6,7 +6,7 @@ from ranger.utils import json_utils
 from ranger.corag.corag_result import QueryResult
 
 
-def request_chain_generate(datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9):
+def request_chain_generate(datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False):
     url = CHAIN_SERVER_CONFIG['url_full_generate']
     headers = {'Content-Type': 'application/json'}
 
@@ -19,7 +19,8 @@ def request_chain_generate(datas, batch_size, n_chains, chain_depth, adapter_pat
         'adapter_path': adapter_path,
         'temperature': temperature,
         'top_p': top_p,
-        'top_k': top_k
+        'top_k': top_k,
+        'is_eval': is_eval
     }
 
     if DEBUG.CHAIN_CLIENT:

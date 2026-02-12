@@ -35,6 +35,8 @@ class CoragAgent:
         self._top_p: float
         self._top_k: int
 
+        self._is_eval: bool
+
 
     def reset(self):
         self._batch_idx = 0
@@ -175,8 +177,9 @@ class CoragAgent:
                     chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))
 
                     # answer_set 은 이미 소문자로 변환해서 저장된 상태이고, final_answer 은 소문자로 norm 처리되어 있음
-                    if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
-                        chain_result._is_stop = True
+                    if not self._is_eval:
+                        if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
+                            chain_result._is_stop = True
 
                     idx += 1
 
@@ -226,12 +229,13 @@ class CoragAgent:
         return count
 
 
-    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9) -> List[QueryResult]:
+    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False) -> List[QueryResult]:
         self._batch_idx += 1
         self._adapter_path = adapter_path
         self._temperature = temperature
         self._top_p = top_p
         self._top_k = top_k
+        self._is_eval = is_eval
 
         # 각 쿼리에 대한 결과 객체 초기화
         query_results = []

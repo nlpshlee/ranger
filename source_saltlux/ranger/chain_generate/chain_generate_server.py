@@ -40,6 +40,7 @@ class ChainGenerateServer(Resource):
         temperature = req_json.get('temperature', -9)
         top_p = req_json.get('top_p', -9)
         top_k = req_json.get('top_k', -9)
+        is_eval = req_json.get('is_eval', False)
 
         results: List[List[QueryResult]] = chain_generator.generate(
             datas=datas,
@@ -49,7 +50,8 @@ class ChainGenerateServer(Resource):
             adapter_path=adapter_path,
             temperature=temperature,
             top_p=top_p,
-            top_k=top_k
+            top_k=top_k,
+            is_eval=is_eval
         )
 
         serialized_results = self._serialize(results)
