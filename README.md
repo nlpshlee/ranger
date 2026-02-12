@@ -53,7 +53,7 @@ elasticsearch-7.10.1/config/elasticsearch.yml
 
 ## Run Preparation
 
-(1) ElasticSearch Server Start
+(1-1) ElasticSearch Server Start
 ```bash
 cd elasticsearch-7.10.1/bin/
 sh elasticsearch
@@ -65,6 +65,15 @@ bash scripts/start_elasticsearch_server.sh
 
 # Elasticsearch 서버 구동 확인 (기본 port 9200)
 curl http://localhost:9200
+```
+
+(1-2) ElasticSearch Document Indexing
+```bash
+# 소스 경로로 이동
+cd source/ranger
+
+# 문서 색인 (최초 한 번만 수행)
+python -u -m retriever_server.build_index
 ```
 
 (2) Retriever Server Start
