@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM, PreTrainedTokenizerFast
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model
 from accelerate import Accelerator
 
-from ranger.utils import common_const, common_utils, json_utils, container_utils, tokenizer_utils
+from ranger.utils import common_const, common_utils, json_utils, container_utils, tokenizer_utils, evaluation_utils
 from ranger.corag.corag_result import QueryResult, ChainResult
 from ranger.chain_generate.chain_generate_client import request_chain_generate, request_reset
 from ranger.reward.reward_calculator import RewardCalculator
@@ -253,23 +253,6 @@ class RangerTrainer:
         request_reset()
 
 
-    # 하나의 쿼리에 대한 모든 체인들의 리워드를 정규화하여 advantage 계산
-    def _calculate_advantage(self, chain_results: List[ChainResult]):
-        # 1. NumPy 배열로 변환
-        rewards = np.array([cr._reward for cr in chain_results], dtype=np.float32)
-
-        # 2. 평균 및 표준편차 계산
-        mean_reward = rewards.mean()
-        std_reward = rewards.std() if len(rewards) > 1 else 0.0
-
-        # 3. 정규화
-        advantages = (rewards - mean_reward) / (std_reward + 1e-8)
-
-        # 4. 결과 저장
-        for i, chain_result in enumerate(chain_results):
-            chain_result._advantage = float(advantages[i])
-
-
     def _get_per_token_log_probs(self, model, input_ids, attention_mask):
         outputs = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
         logits = outputs.logits
@@ -457,12 +440,9 @@ class RangerTrainer:
                     self._adapter_path
                 )
 
-                # 2. 체인 별로 각각 리워드 계산
-                self._reward_calculator.calculate_reward(query_results)
-
+                # 2. 체인 별로 각각 reward 계산
                 # 3. grpo advantage 계산 (쿼리 별로 해당 쿼리의 체인 집합에 대하여 계산)
-                for query_result in query_results:
-                    self._calculate_advantage(query_result._chain_results)
+                self._reward_calculator.calculate_reward_and_advantage(query_results)
                 
                 # 4. 실제 train step (forward/backward)
                 # 'batch_loss', 'all_batch_loss'는 둘 다 로깅 목적
@@ -512,61 +492,28 @@ class RangerTrainer:
         self._logging(f'RangerTrainer.train() train end : {common_utils.get_datetime_now()}, elapsed : {train_elapsed_str}')
 
 
-    def evaluate(self, epoch, datas, batch_size, n_chains, chain_depth):
+    def evaluate(self, epoch, datas, batch_size, n_chains, chain_depth, temperature=-9, top_p=-9, top_k=-9):
         if self._accelerator.is_main_process:
             self._reset_epoch()
         self._accelerator.wait_for_everyone()
 
         prefix = '[base]' if epoch == 0 else f'[{epoch} epoch]'
-        data_size = len(datas)
 
-        self._logging(f'RangerTrainer.evaluate() {prefix} data_size : {data_size}, batch_size : {batch_size}, n_chains : {n_chains}, chain_depth : {chain_depth}')
-        self._logging(f'RangerTrainer.evaluate() {prefix} eval start : {common_utils.get_datetime_now()}')
-        eval_start = common_utils.get_time_ms()
-
-        local_rewards = []
-        local_advantages = []
-        local_f1s = []
-
-        for batch_idx, datas_batch in enumerate(container_utils.chunks(datas, batch_size)):
-            self._logging(f'RangerTrainer.evaluate() {prefix} {batch_idx+1} batch start\t: {common_utils.get_datetime_now()}')
-            batch_start = common_utils.get_time_ms()
-
-            query_results: List[QueryResult] = request_chain_generate(
-                datas_batch,
-                batch_size,
-                n_chains,
-                chain_depth,
-                self._adapter_path
-            )
-
-            self._reward_calculator.calculate_reward(query_results)
-
-            for query_result in query_results:
-                self._calculate_advantage(query_result._chain_results)
-
-                best_reward = common_const.NULL_FLOAT
-                best_advantage = common_const.NULL_FLOAT
-                best_f1 = common_const.NULL_FLOAT
-
-                for chain_result in query_result._chain_results:
-                    if best_f1 < chain_result._f1:
-                        best_reward = chain_result._reward
-                        best_advantage = chain_result._advantage
-                        best_f1 = chain_result._f1
-                
-                local_rewards.append(best_reward)
-                local_advantages.append(best_advantage)
-                local_f1s.append(best_f1)
-            
-            _, batch_elapsed_str = common_utils.get_elapsed_time_ms(batch_start)
-            self._logging(f'RangerTrainer.evaluate() {prefix} {batch_idx+1} batch end\t: {common_utils.get_datetime_now()}, elapsed : {batch_elapsed_str}')
+        local_ems, local_f1s, local_rewards, local_advantages = evaluation_utils.evaluate(
+            prefix,
+            datas,
+            batch_size,
+            n_chains,
+            chain_depth,
+            self._adapter_path,
+            temperature,
+            top_p,
+            top_k,
+            self._reward_calculator
+        )
 
         # wandb 에 별도 로깅
-        self._wandb_logging_evaluate(epoch, local_rewards, local_advantages, local_f1s)
-
-        _, eval_elapsed_str = common_utils.get_elapsed_time_ms(eval_start)
-        self._logging(f'RangerTrainer.evaluate() {prefix} eval end : {common_utils.get_datetime_now()}, elapsed : {eval_elapsed_str}')
+        self._wandb_logging_evaluate(epoch, local_ems, local_f1s, local_rewards, local_advantages)
 
 
     def _wandb_logging_train_batch(self, epoch, batch_step, batch_loss, query_results: List[QueryResult]):
@@ -601,30 +548,35 @@ class RangerTrainer:
         self._accelerator.wait_for_everyone()
 
 
-    def _wandb_logging_evaluate(self, epoch, local_rewards, local_advantages, local_f1s):
+    def _wandb_logging_evaluate(self, epoch, local_ems, local_rewards, local_advantages, local_f1s):
+        t_ems = torch.tensor(local_ems, device=self._device)
+        t_f1s = torch.tensor(local_f1s, device=self._device)
         t_rewards = torch.tensor(local_rewards, device=self._device)
         t_advantages = torch.tensor(local_advantages, device=self._device)
-        t_f1s = torch.tensor(local_f1s, device=self._device)
 
+        all_em = self._accelerator.gather(t_ems)
+        all_f1 = self._accelerator.gather(t_f1s)
         all_reward = self._accelerator.gather(t_rewards)
         all_advantage = self._accelerator.gather(t_advantages)
-        all_f1 = self._accelerator.gather(t_f1s)
 
         if self._accelerator.is_main_process:
+            avg_em = all_em.mean().item()
+            avg_f1 = all_f1.mean().item()
             avg_reward = all_reward.mean().item()
             avg_advantage = all_advantage.mean().item()
-            avg_f1 = all_f1.mean().item()
 
             wandb.log({
                 'epoch': epoch,
+                'evaluate/em': avg_em,
+                'evaluate/f1': avg_f1,
                 'evaluate/reward': avg_reward,
-                'evaluate/advantage': avg_advantage,
-                'evaluate/f1': avg_f1
+                'evaluate/advantage': avg_advantage
             }, step=self._global_step)
 
+            self._logging(f'RangerTrainer._wandb_logging_evaluate() avg_em : {avg_em}, (gathered len : {len(all_em)})')
+            self._logging(f'RangerTrainer._wandb_logging_evaluate() avg_f1 : {avg_f1}, (gathered len : {len(all_f1)})')
             self._logging(f'RangerTrainer._wandb_logging_evaluate() avg_reward : {avg_reward}, (gathered len : {len(all_reward)})')
             self._logging(f'RangerTrainer._wandb_logging_evaluate() avg_advantage : {avg_advantage}, (gathered len : {len(all_advantage)})')
-            self._logging(f'RangerTrainer._wandb_logging_evaluate() avg_f1 : {avg_f1}, (gathered len : {len(all_f1)})')
-        
+
         self._accelerator.wait_for_everyone()
 

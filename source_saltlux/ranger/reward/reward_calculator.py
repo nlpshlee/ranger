@@ -2,6 +2,7 @@ from _init import *
 
 import math
 from typing import List
+import numpy as np
 
 from ranger.utils import common_utils
 from ranger.corag.corag_result import QueryResult, ChainResult
@@ -13,6 +14,23 @@ class RewardOption:
     LENGTH = 2
     CONFIDENCE = 4
     ALL = CORRECT | LENGTH | CONFIDENCE
+
+
+# 하나의 쿼리에 대한 모든 체인들의 리워드를 정규화하여 advantage 계산
+def _calculate_advantage(chain_results: List[ChainResult]):
+    # 1. NumPy 배열로 변환
+    rewards = np.array([cr._reward for cr in chain_results], dtype=np.float32)
+
+    # 2. 평균 및 표준편차 계산
+    mean_reward = rewards.mean()
+    std_reward = rewards.std() if len(rewards) > 1 else 0.0
+
+    # 3. 정규화
+    advantages = (rewards - mean_reward) / (std_reward + 1e-8)
+
+    # 4. 결과 저장
+    for i, chain_result in enumerate(chain_results):
+        chain_result._advantage = float(advantages[i])
 
 
 class RewardCalculator:
@@ -67,7 +85,7 @@ class RewardCalculator:
         return mul_reward
 
 
-    def calculate_reward(self, query_results: List[QueryResult]):
+    def _calculate_reward(self, query_results: List[QueryResult]):
         for query_result in query_results:
             '''
                 하나의 쿼리에서 생성된 모든 체인 별로 각각 em/f1 계산
@@ -82,4 +100,11 @@ class RewardCalculator:
                     reward = reward.real
 
                 chain_result._reward = float(max(0.0, reward))
+
+
+    def calculate_reward_and_advantage(self, query_results: List[QueryResult]):
+        self._calculate_reward(query_results)
+
+        for query_result in query_results:
+            _calculate_advantage(query_result._chain_results)
 

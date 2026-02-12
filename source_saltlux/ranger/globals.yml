@@ -36,11 +36,11 @@ VLLM_CONFIG:
   DTYPE: 'float16'
   MAX_SEQ_LENGTH: 4096
   MAX_NEW_TOKENS: 64
-  TEMPERATURE: 0.5 # RL을 위해 임시로 높은 값 설정
+  TEMPERATURE: 0.7 # RL을 위해 임시로 높은 값 설정
   TOP_P: 0.95
   TOP_K: -1
   GPU_MEMORY_UTILIZATION: 0.3
-  N_LOG_PROB: 1 # 상위 N개 토큰의 확률 (최대 20)
+  N_LOG_PROB: 10 # 상위 N개 토큰의 확률 (최대 20)
 
 
 CORAG_CONFIG:
