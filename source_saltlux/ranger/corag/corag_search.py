@@ -23,14 +23,14 @@ def search_by_http(query: str, topk=5,
     
     search_start = common_utils.get_time_ms()
     if DEBUG.CORAG_SEARCH:
-        print(f'# [CORAG_SEARCH] corag_search.search_by_http() start : [{query[:5]}], timeout : {timeout}s')
+        print(f'# [CORAG_SEARCH] corag_search.search_by_http() start : [{query}], timeout : {timeout}s')
     
     try:
         response = requests.post(url, json=payload, timeout=timeout)
 
         elapsed_ms, elapsed_str = common_utils.get_elapsed_time_ms(search_start)
         if DEBUG.CORAG_SEARCH:
-            print(f'# [CORAG_SEARCH] corag_search.search_by_http() end : [{query[:5]}], elapsed_time : {elapsed_str} ({elapsed_ms}ms)\n')
+            print(f'# [CORAG_SEARCH] corag_search.search_by_http() end : [{query}], elapsed_time : {elapsed_str} ({elapsed_ms}ms)\n')
 
         if response.status_code == 200:
             result = response.json()
@@ -49,21 +49,21 @@ def search_by_http(query: str, topk=5,
             return result['retrieval']
         else:
             if DEBUG.CORAG_SEARCH | DEBUG.ERROR:
-                print(f'# [ERROR] corag_search.search_by_http() 검색 실패 : [{query[:5]}], elapsed_time : {elapsed_str}, status_code : {response.status_code}, response : {response.text}\n')
+                print(f'# [ERROR] corag_search.search_by_http() 검색 실패 : [{query}], elapsed_time : {elapsed_str}, status_code : {response.status_code}, response : {response.text}\n')
             return []
     except requests.exceptions.Timeout:
         if DEBUG.CORAG_SEARCH | DEBUG.ERROR:
             _, elapsed_str = common_utils.get_elapsed_time_ms(search_start)
-            print(f'# [ERROR] corag_search.search_by_http() 검색 타임 아웃 : [{query[:5]}], elapsed_time : {elapsed_str}, timeout : {timeout}s\n')
+            print(f'# [ERROR] corag_search.search_by_http() 검색 타임 아웃 : [{query}], elapsed_time : {elapsed_str}, timeout : {timeout}s\n')
         return []
     except requests.exceptions.ConnectionError as e:
         if DEBUG.CORAG_SEARCH | DEBUG.ERROR:
             _, elapsed_str = common_utils.get_elapsed_time_ms(search_start)
-            print(f'# [ERROR] corag_search.search_by_http() 검색 연결 오류 : [{query[:5]}], elapsed_time : {elapsed_str}, error_msg : {e}\n')
+            print(f'# [ERROR] corag_search.search_by_http() 검색 연결 오류 : [{query}], elapsed_time : {elapsed_str}, error_msg : {e}\n')
         return []
     except Exception as e:
         if DEBUG.CORAG_SEARCH | DEBUG.ERROR:
             _, elapsed_str = common_utils.get_elapsed_time_ms(search_start)
-            print(f'# [ERROR] corag_search.search_by_http() 검색 예외 발생 : [{query[:5]}], elapsed_time : {elapsed_str}, error_msg : {e}\n')
+            print(f'# [ERROR] corag_search.search_by_http() 검색 예외 발생 : [{query}], elapsed_time : {elapsed_str}, error_msg : {e}\n')
         return []
 
