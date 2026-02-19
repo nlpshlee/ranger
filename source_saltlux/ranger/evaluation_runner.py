@@ -110,12 +110,13 @@ def run_all(prefix, all_dataset, batch_size, n_chains, chain_depth, adapter_path
     CUDA_VISIBLE_DEVICES=1 python -u evaluation_runner.py > ./logs/evaluation_runner.log
 '''
 if __name__ == "__main__":
+    model_name = 'llama-3B'
     batch_size = 100
     chain_depth = 5
 
     # greedy
     run_all(
-        prefix='CoRAG-8B greedy',
+        prefix=f'{model_name} greedy',
         all_dataset=all_dataset,
         batch_size=batch_size,
         n_chains=1,
@@ -123,14 +124,14 @@ if __name__ == "__main__":
         adapter_path='',
         temperature=0.0,
         top_p=1.0,
-        top_k=-1
+        top_k=1
     )
 
     # best-of-n
     for n_chains in [5, 4, 3, 2]:
         for temperature in [0.6, 0.7, 0.8]:
             run_all(
-                prefix='CoRAG-8B best_n',
+                prefix=f'{model_name} best_n',
                 all_dataset=all_dataset,
                 batch_size=batch_size,
                 n_chains=n_chains,
