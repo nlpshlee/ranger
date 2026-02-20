@@ -48,6 +48,7 @@ Respond with a concise answer only, do not explain yourself or output anything e
     ]
     return messages
 
+
 def decide_stop_or_not_prompt(
         query: str, past_subqueries: List[str], past_subanswers: List[str]
 ) -> str:
@@ -76,7 +77,7 @@ Respond with “Yes” or “No” only, do not explain yourself or output anyth
 
 def get_generate_final_answer_prompt(
         query: str, past_subqueries: List[str], past_subanswers: List[str], task_desc: str,
-        documents: Optional[List[str]] = None
+        documents: Optional[List[str]] = None, add_decide_prompt=True
 ) -> List[Dict]:
 
     assert len(past_subqueries) == len(past_subanswers)
@@ -107,10 +108,25 @@ Intermediate answer {idx+1}: {past_subanswers[idx]}\n"""
 
 Respond with an appropriate answer only, do not explain yourself or output anything else."""
 
+    if add_decide_prompt:
+        prompt = add_decide_stop_or_continue_prompt(prompt)
+    
     messages: List[Dict] = [
         {'role': 'user', 'content': prompt}
     ]
     return messages
+
+
+def add_decide_stop_or_continue_prompt(prompt):
+    prompt_stop_or_continue = """
+IMPORTANT: You must start your response with a special token indicating whether you can answer the query or need more information.
+- If the provided information is sufficient to answer the main query, start with "<STOP>" followed by your final answer.
+- If the information is insufficient and you need to continue searching, start with "<CONTINUE>" followed by your preliminary answer.
+"""
+
+    prompt = f'{prompt}\n\n{prompt_stop_or_continue.strip()}'
+    return prompt
+
 
 def decide_stop_or_not_prompt_gpt(
         client,

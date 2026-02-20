@@ -4,7 +4,7 @@ __pycache__
 .DS_Store
 *.gz
 elasticsearch-7.10.1
-data/sft
+data/sft*
 logs
 output*
 wandb
