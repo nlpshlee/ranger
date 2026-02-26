@@ -119,3 +119,12 @@ def format_documents_for_final_answer(args: CoragArguments,
 
     return documents
 
+
+def truncate_starts(text: str, rm_words: list):
+    for rm_word in rm_words:
+        if text.startswith(rm_word):
+            text = text[len(rm_word):].strip()
+            return True, text
+
+    return False, text
+

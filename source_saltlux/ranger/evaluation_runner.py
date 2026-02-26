@@ -2,14 +2,14 @@ from _init import *
 
 import numpy as np
 
-from ranger.utils import common_utils, json_utils, container_utils, evaluation_utils
+from ranger.utils import common_utils, json_utils, evaluation_utils
 from ranger.reward.reward_calculator import RewardCalculator
 
 
 seed = COMMON_CONFIG['seed']
 common_utils.set_seed(seed)
 
-work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
+work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
 data_dir = f'{work_dir}/data'
 out_dir = f'{work_dir}/output'
 
@@ -75,6 +75,9 @@ def _run(prefix, datas, batch_size, n_chains, chain_depth, adapter_path, tempera
 
 
 def run_all(prefix, all_dataset, batch_size, n_chains, chain_depth, adapter_path, temperature, top_p, top_k):
+    print(f'\nevaluation_runner.run_all() start : {common_utils.get_datetime_now()}\n')
+    eval_start = common_utils.get_time_ms()
+
     all_ems, all_f1s, all_rewards, all_advantages = [], [], [], []
 
     for dataset_src in DATASET_SRCS:
@@ -101,6 +104,9 @@ def run_all(prefix, all_dataset, batch_size, n_chains, chain_depth, adapter_path
     _print_score('ALL reward', all_rewards)
     _print_score('ALL advantage', all_advantages)
     print()
+
+    _, eval_elapsed_str = common_utils.get_elapsed_time_ms(eval_start)
+    print(f'evaluation_runner.run_all() end : {common_utils.get_datetime_now()}, elapsed : {eval_elapsed_str}\n')
 
 
 

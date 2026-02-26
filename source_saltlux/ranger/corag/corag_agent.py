@@ -172,14 +172,23 @@ class CoragAgent:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
                     final_answer, completion_output = final_answer_completion_output_list[idx]
-                    normalized_final_answer = corag_utils.normalize_answer(final_answer)
-                    chain_result._final_answers.append(normalized_final_answer)
-                    chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))
+                    normalized_final_answer = corag_utils.normalize_answer(final_answer, to_lower=True)
 
-                    # answer_set 은 이미 소문자로 변환해서 저장된 상태이고, final_answer 은 소문자로 norm 처리되어 있음
+                    # answer_set 은 이미 소문자로 변환해서 저장된 상태이고, final_answer 도 normalize_answer() 에서 소문자 처리
                     if not self._is_eval:
+                        '''
+                            학습 시에, normalized_final_answer 에서 아래처럼 truncate 할지 확인 필요
+                        '''
                         if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
                             chain_result._is_stop = True
+                    else:
+                        is_truncated, normalized_final_answer = corag_utils.truncate_starts(normalized_final_answer, ['<continue>', '[continue]', '(continue)', 'continue'])
+
+                        if not is_truncated:
+                            chain_result._is_stop, normalized_final_answer = corag_utils.truncate_starts(normalized_final_answer, ['<stop>', '[stop]', '(stop)', 'stop'])
+
+                    chain_result._final_answers.append(normalized_final_answer)
+                    chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))
 
                     idx += 1
 

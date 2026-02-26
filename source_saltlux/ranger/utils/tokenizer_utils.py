@@ -9,7 +9,13 @@ def load_tokenizer(model_name: str, padding_side='left') -> PreTrainedTokenizerF
     tokenizer.padding_side = padding_side
 
     if tokenizer.pad_token is None:
-        # <|end_of_text|>(128001) 또는 <|eot_id|>(128009) -> '128009'가 중간에 나타나서 다른 걸로 변경
+        '''
+            <|end_of_text|>(128001) 또는 <|eot_id|>(128009) -> '128009'가 중간에 나타나서 다른 걸로 변경
+
+            또, 128009가 종료 토큰으로 되어 있는데, 이걸 패딩 토큰으로 사용하면
+            학습에 반영되어야 하는 실제 마지막 종료 토큰까지 패딩으로 인식되기 때문에
+            종료 토큰(128009) 대신에 다른 토큰(128001)을 패딩 토큰으로 사용한 것
+        '''
         if tokenizer.eos_token_id == 128009:
             tokenizer.pad_token = '<|end_of_text|>'
         else:
@@ -59,13 +65,19 @@ def tokenize_apply_chat_template_and_truncate(
         add_generation_prompt=True
     ) -> List[List[int]]:
 
-    prompt_ids_list = [
-        tokenizer.apply_chat_template(
-            data,
-            tokenize=True,
-            add_generation_prompt=add_generation_prompt
-        ) for data in datas
-    ]
+    '''
+        배치로 한 번에 처리되도록 변경
+        - apply_chat_template() 반환 타입을 고려하여, 2단계로 분리해서 진행
+            - apply_chat_template() -> tokenize()
+            - 한 번에 하는 것과 속도 차이는 크게 없음
+    '''
+    datas_chat_template = tokenizer.apply_chat_template(
+        datas,
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt
+    )
+
+    prompt_ids_list = tokenizer(datas_chat_template, add_special_tokens=False)["input_ids"]
 
     truncated_prompt_ids_list = []
     bos_token_id = tokenizer.bos_token_id
