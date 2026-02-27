@@ -116,13 +116,13 @@ def run_all(prefix, all_dataset, batch_size, n_chains, chain_depth, adapter_path
     CUDA_VISIBLE_DEVICES=1 python -u evaluation_runner.py > ./logs/evaluation_runner.log
 '''
 if __name__ == "__main__":
-    model_name = 'llama-3B'
+    logging_model_name = 'llama-3B'
     batch_size = 100
     chain_depth = 5
 
     # greedy
     run_all(
-        prefix=f'{model_name} greedy',
+        prefix=f'{logging_model_name} greedy',
         all_dataset=all_dataset,
         batch_size=batch_size,
         n_chains=1,
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     for n_chains in [5, 4, 3, 2]:
         for temperature in [0.6, 0.7, 0.8]:
             run_all(
-                prefix=f'{model_name} best_n',
+                prefix=f'{logging_model_name} best_n',
                 all_dataset=all_dataset,
                 batch_size=batch_size,
                 n_chains=n_chains,
