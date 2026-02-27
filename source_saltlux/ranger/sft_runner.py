@@ -1,10 +1,10 @@
 from _init import *
 
-import random, math
+import random, math, glob
 from transformers import TrainingArguments
 from peft import LoraConfig, TaskType
 
-from ranger.utils import common_utils, json_utils
+from ranger.utils import common_utils, json_utils, evaluation_utils
 from ranger.train.sft_trainer import SftTrainer
 
 
@@ -121,6 +121,20 @@ def train(model_name, dtype, max_seq_length,
     sft_trainer.train(training_args)
 
 
+def evaluate_all(checkpoint_dir, eval_datas):
+    checkpoint_paths = glob.glob(f'{checkpoint_dir}/checkpoint-*')
+    checkpoint_paths.sort(key=lambda x: int(x.split('-')[-1]))
+
+    for checkpoint_path in checkpoint_paths:
+        evaluation_utils.evaluate_sft(
+            checkpoint_path,
+            VLLM_CONFIG['dtype'],
+            eval_datas,
+            VLLM_CONFIG['max_seq_length'],
+            VLLM_CONFIG['max_new_tokens']
+        )
+
+
 
 
 
@@ -133,7 +147,7 @@ if __name__ == "__main__":
     sft_dir = f'{data_dir}/sft'
     selected_dir = f'{sft_dir}/selected'
     train_dir = f'{sft_dir}/selected_train'
-    out_dir = f'{work_dir}/outputs/sft/v4_260226_only_first_sub_query'
+    out_dir = f'{work_dir}/outputs/sft/v4_260226_llama-3B_only_first_sub_query'
 
     train_file_path = f'{train_dir}/train_merged.jsonl'
     train_size = 27000
@@ -145,5 +159,10 @@ if __name__ == "__main__":
         20, 3, 16, 5e-5, 0.01, 0.05, 1.0,
         train_datas, eval_datas,
         5, 5, out_dir
+    )
+
+    evaluate_all(
+        out_dir,
+        eval_datas
     )
 
