@@ -4,7 +4,7 @@ import random, math, glob
 from transformers import TrainingArguments
 from peft import LoraConfig, TaskType
 
-from ranger.utils import common_utils, json_utils, evaluation_utils
+from ranger.utils import common_utils, json_utils, evaluation_utils, model_utils
 from ranger.train.sft_trainer import SftTrainer
 
 
@@ -64,7 +64,7 @@ def get_training_args(out_dir,
                       lr_scheduler_type='cosine',
                       load_best_model_at_end=True,
                       metric_for_best_model='eval_loss',
-                      save_total_limit=10):
+                      save_total_limit=5):
     
     training_args = TrainingArguments(
         output_dir=out_dir,
@@ -140,21 +140,35 @@ def evaluate_all(checkpoint_dir, eval_datas):
 
 '''
     CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner.log
+    
+    CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner_v1_260222_llama-3B_all.log
+    CUDA_VISIBLE_DEVICES=1 python -u sft_runner.py > ./logs/sft_runner_v2_260226_llama-3B_only_first_sub_query.log
 '''
 if __name__ == "__main__":
     work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
     data_dir = f'{work_dir}/data'
     sft_dir = f'{data_dir}/sft'
-    selected_dir = f'{sft_dir}/selected'
-    train_dir = f'{sft_dir}/selected_train'
-    out_dir = f'{work_dir}/outputs/sft/v4_260226_llama-3B_only_first_sub_query'
+
+
+
+    data_version = 'v2'
+    base_model = 'meta-llama/Llama-3.2-3B-Instruct'
+    # base_model = 'meta-llama/Llama-3.1-8B-Instruct'
+
+    if data_version == 'v1':
+        train_dir = f'{sft_dir}/selected_train_v1_all'
+        out_dir = f'{work_dir}/outputs/sft/v1_260222_llama-3B_all'
+        train_size = 29000
+    elif data_version == 'v2':
+        train_dir = f'{sft_dir}/selected_train_v2_only_first_sub_query'
+        out_dir = f'{work_dir}/outputs/sft/v2_260226_llama-3B_only_first_sub_query'
+        train_size = 27000
 
     train_file_path = f'{train_dir}/train_merged.jsonl'
-    train_size = 27000
     train_datas, eval_datas = load_datas(train_file_path, train_size)
 
     train(
-        'meta-llama/Llama-3.2-3B-Instruct', 'bfloat16', 4096,
+        base_model, VLLM_CONFIG['dtype'], VLLM_CONFIG['MAX_SEQ_LENGTH'],
         64, 128, 0.05,
         20, 3, 16, 5e-5, 0.01, 0.05, 1.0,
         train_datas, eval_datas,
@@ -164,5 +178,17 @@ if __name__ == "__main__":
     evaluate_all(
         out_dir,
         eval_datas
+    )
+
+
+
+    model_dir = f'{work_dir}/outputs/sft/models'
+    checkpoint_num = 1
+
+    model_utils.merge_and_save(
+        base_model,
+        VLLM_CONFIG['dtype'],
+        f'{out_dir}/checkpoint-{checkpoint_num}',
+        f'{model_dir}/v1_checkpoint-{checkpoint_num}'
     )
 
