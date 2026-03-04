@@ -140,9 +140,9 @@ def evaluate_all(checkpoint_dir, eval_datas):
 
 '''
     CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner.log
-    
-    CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner_v1_260222_llama-3B_all.log
-    CUDA_VISIBLE_DEVICES=1 python -u sft_runner.py > ./logs/sft_runner_v2_260226_llama-3B_only_first_sub_query.log
+    CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner_v1_llama-3B.log
+    CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner_v2_llama-3B.log
+    CUDA_VISIBLE_DEVICES=0 python -u sft_runner.py > ./logs/sft_runner_v2_llama-8B.log
 '''
 if __name__ == "__main__":
     work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
@@ -152,43 +152,45 @@ if __name__ == "__main__":
 
 
     data_version = 'v2'
-    base_model = 'meta-llama/Llama-3.2-3B-Instruct'
-    # base_model = 'meta-llama/Llama-3.1-8B-Instruct'
+    # base_model = 'meta-llama/Llama-3.2-3B-Instruct'
+    base_model = 'meta-llama/Llama-3.1-8B-Instruct'
+
+    # out_dir = f'{work_dir}/outputs/sft/v1_llama-3B'
+    # out_dir = f'{work_dir}/outputs/sft/v2_llama-3B'
+    out_dir = f'{work_dir}/outputs/sft/v2_llama-8B'
 
     if data_version == 'v1':
         train_dir = f'{sft_dir}/selected_train_v1_all'
-        out_dir = f'{work_dir}/outputs/sft/v1_260222_llama-3B_all'
         train_size = 29000
     elif data_version == 'v2':
         train_dir = f'{sft_dir}/selected_train_v2_only_first_sub_query'
-        out_dir = f'{work_dir}/outputs/sft/v2_260226_llama-3B_only_first_sub_query'
         train_size = 27000
 
     train_file_path = f'{train_dir}/train_merged.jsonl'
     train_datas, eval_datas = load_datas(train_file_path, train_size)
 
-    train(
-        base_model, VLLM_CONFIG['dtype'], VLLM_CONFIG['MAX_SEQ_LENGTH'],
-        64, 128, 0.05,
-        20, 3, 16, 5e-5, 0.01, 0.05, 1.0,
-        train_datas, eval_datas,
-        5, 5, out_dir
-    )
+    # train(
+    #     base_model, VLLM_CONFIG['dtype'], VLLM_CONFIG['max_seq_length'],
+    #     64, 128, 0.05,
+    #     5, 2, 16, 5e-5, 0.01, 0.05, 1.0,
+    #     train_datas, eval_datas,
+    #     5, 5, out_dir
+    # )
 
-    evaluate_all(
-        out_dir,
-        eval_datas
-    )
+    # evaluate_all(
+    #     out_dir,
+    #     eval_datas
+    # )
 
 
 
     model_dir = f'{work_dir}/outputs/sft/models'
-    checkpoint_num = 1
+    checkpoint_num = -1
 
     model_utils.merge_and_save(
         base_model,
         VLLM_CONFIG['dtype'],
         f'{out_dir}/checkpoint-{checkpoint_num}',
-        f'{model_dir}/v1_checkpoint-{checkpoint_num}'
+        f'{model_dir}/{data_version}_8B_checkpoint-{checkpoint_num}'
     )
 

@@ -9,7 +9,7 @@ from ranger.reward.reward_calculator import RewardCalculator
 seed = COMMON_CONFIG['seed']
 common_utils.set_seed(seed)
 
-work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
+work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
 data_dir = f'{work_dir}/data'
 out_dir = f'{work_dir}/output'
 
@@ -116,7 +116,7 @@ def run_all(prefix, all_dataset, batch_size, n_chains, chain_depth, adapter_path
     CUDA_VISIBLE_DEVICES=1 python -u evaluation_runner.py > ./logs/evaluation_runner.log
 '''
 if __name__ == "__main__":
-    logging_model_name = 'llama-3B'
+    logging_model_name = 'llama-8B-SFT_v2'
     batch_size = 100
     chain_depth = 5
 
