@@ -113,25 +113,29 @@ def run_all(prefix, all_dataset, batch_size, n_chains, chain_depth, adapter_path
 
 
 '''
-    CUDA_VISIBLE_DEVICES=1 python -u evaluation_runner.py > ./logs/evaluation_runner.log
+    CUDA_VISIBLE_DEVICES=0 python -u evaluation_runner.py > ./logs/evaluation_runner_3B_ckpt-1470.log
+    CUDA_VISIBLE_DEVICES=1 python -u evaluation_runner.py > ./logs/evaluation_runner_8B_ckpt-3528.log
 '''
 if __name__ == "__main__":
+    print(f'\nevaluation_runner.main() start : {common_utils.get_datetime_now()}\n')
+    eval_start = common_utils.get_time_ms()
+
     logging_model_name = 'llama-8B-SFT_v2'
     batch_size = 100
-    chain_depth = 5
 
     # greedy
-    run_all(
-        prefix=f'{logging_model_name} greedy',
-        all_dataset=all_dataset,
-        batch_size=batch_size,
-        n_chains=1,
-        chain_depth=chain_depth,
-        adapter_path='',
-        temperature=0.0,
-        top_p=1.0,
-        top_k=1
-    )
+    for chain_depth in [5]:
+        run_all(
+            prefix=f'{logging_model_name} greedy',
+            all_dataset=all_dataset,
+            batch_size=batch_size,
+            n_chains=1,
+            chain_depth=chain_depth,
+            adapter_path='',
+            temperature=0.0,
+            top_p=1.0,
+            top_k=1
+        )
 
     # best-of-n
     for n_chains in [5, 4, 3, 2]:
@@ -141,10 +145,13 @@ if __name__ == "__main__":
                 all_dataset=all_dataset,
                 batch_size=batch_size,
                 n_chains=n_chains,
-                chain_depth=chain_depth,
+                chain_depth=5,
                 adapter_path='',
                 temperature=temperature,
                 top_p=0.95,
                 top_k=-1
             )
+
+    _, eval_elapsed_str = common_utils.get_elapsed_time_ms(eval_start)
+    print(f'evaluation_runner.main() end : {common_utils.get_datetime_now()}, elapsed : {eval_elapsed_str}\n')
 
