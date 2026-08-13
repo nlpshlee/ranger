@@ -31,6 +31,16 @@ class SftDataset(Dataset):
 
         for source_ids, target_ids in zip(source_ids_list, target_ids_list):
             input_ids = source_ids + target_ids
+
+            '''
+                '입력+정답'의 길이가 최대 길이를 넘어가면 스킵
+                    - 스킵하지 않으려면, 입력 부분에 대해서 정답 부분의 길이를 뺀 값으로 최대 길이를 설정해야 하는데
+                      그렇게 하려면, 배치 단위로 못 하고 하나씩 토크나이징 해야함
+                    - 그리고 입력 부분을 강제로 자르고 학습을 하는 것 자체가 문맥을 훼손한 상태로 로스를 계산하는거라 위험할 수 있음
+            '''
+            if len(input_ids) > self._max_length:
+                continue
+
             attention_mask = [1] * len(input_ids)
             labels = [self._ignore_index] * len(source_ids) + target_ids
 
