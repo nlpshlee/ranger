@@ -5,19 +5,26 @@ from typing import List, Dict
 
 
 def load_tokenizer(model_name: str, padding_side='left') -> PreTrainedTokenizerFast:
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(model_name, use_fast=True, clean_up_tokenization_spaces=False)
     tokenizer.padding_side = padding_side
 
     if tokenizer.pad_token is None:
-        '''
-            <|end_of_text|>(128001) 또는 <|eot_id|>(128009) -> '128009'가 중간에 나타나서 다른 걸로 변경
+        model_name_lower = model_name.lower()
 
-            또, 128009가 종료 토큰으로 되어 있는데, 이걸 패딩 토큰으로 사용하면
-            학습에 반영되어야 하는 실제 마지막 종료 토큰까지 패딩으로 인식되기 때문에
-            종료 토큰(128009) 대신에 다른 토큰(128001)을 패딩 토큰으로 사용한 것
-        '''
-        if tokenizer.eos_token_id == 128009:
-            tokenizer.pad_token = '<|end_of_text|>'
+        if 'llama' in model_name_lower:
+            '''
+                <|end_of_text|>(128001) 또는 <|eot_id|>(128009) -> '128009'가 중간에 나타나서 다른 걸로 변경
+
+                또, 128009가 종료 토큰으로 되어 있는데, 이걸 패딩 토큰으로 사용하면
+                학습에 반영되어야 하는 실제 마지막 종료 토큰까지 패딩으로 인식되기 때문에
+                종료 토큰(128009) 대신에 다른 토큰(128001)을 패딩 토큰으로 사용한 것
+            '''
+            if tokenizer.eos_token_id == 128009:
+                tokenizer.pad_token = '<|end_of_text|>'
+            else:
+                tokenizer.pad_token = tokenizer.eos_token
+        elif 'qwen' in model_name_lower:
+            tokenizer.pad_token = '<|endoftext|>'
         else:
             tokenizer.pad_token = tokenizer.eos_token
 
