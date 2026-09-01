@@ -12,6 +12,17 @@ ERR_PREFIX = '# [ERROR] model_utils'
 ATTN_IMP = 'flash_attention_2'
 
 
+def get_model_name_or_path(model_name: str):
+    if model_name.startswith(f'Llama'):
+        model_name_or_path = f'meta-llama/{model_name}-Instruct'
+    elif model_name.startswith('Qwen'):
+        model_name_or_path = f'Qwen/{model_name}-Instruct'
+    else:
+        model_name_or_path = model_name
+
+    return model_name_or_path
+
+
 def get_model(model_name_or_path, dtype, device=None, device_map=None, attn_imp=None, is_eval=False):
     if (device is not None) and (device_map is not None):
         if DEBUG.ERROR:

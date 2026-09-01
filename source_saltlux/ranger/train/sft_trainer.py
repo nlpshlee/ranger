@@ -50,6 +50,9 @@ class SftTrainer:
         # 학습 시에는 'right', 평가(추론) 시에는 'left'
         self._tokenizer: PreTrainedTokenizerFast = tokenizer_utils.load_tokenizer(self._model_name_or_path, 'right')
 
+        # 아직 아래 코드 검증 안됨
+        # self._model.resize_token_embeddings(len(self._tokenizer))
+
         self._data_collator = DataCollatorForSeq2Seq(
             tokenizer=self._tokenizer,
             model=self._model,
