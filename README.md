@@ -3,9 +3,10 @@ Reinforce AugmeNted Generation with Evidence Retrieval
 
 ## Install Guide
 
-Anaconda 가상 환경 생성
+Anaconda 가상 환경 생성 및 NVIDIA 툴킷 설치
 ```bash
 conda create -n ranger python=3.10 -y
+conda install -c nvidia cuda-toolkit=12.4 -y
 ```
 
 PyTorch 2.6.0 + CUDA 12.4 설치 (cu124)
@@ -15,11 +16,8 @@ pip install torch==2.6.0+cu124 torchvision torchaudio --index-url https://downlo
 
 라이브러리 설치
 ```bash
-pip install elasticsearch==7.10.1
-pip install ninja packaging
-pip install psutil
-pip install flash-attn==2.7.0.post2 --no-build-isolation
-
+pip install ninja psutil
+pip install flash_attn==2.7.0.post2 --no-build-isolation --no-cache-dir
 pip install -r requirements.txt
 ```
 
