@@ -35,7 +35,7 @@ def get_model(model_name_or_path, dtype, device=None, device_map=None, attn_imp=
     if device is not None:
         model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
-            dtype=getattr(torch, dtype),
+            torch_dtype=getattr(torch, dtype),
             trust_remote_code=False,
             attn_implementation=attn_imp
         )
@@ -44,7 +44,7 @@ def get_model(model_name_or_path, dtype, device=None, device_map=None, attn_imp=
     elif device_map is not None:
         model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
-            dtype=getattr(torch, dtype),
+            torch_dtype=getattr(torch, dtype),
             device_map=device_map, # accelerator 사용할 때만 ('auto')
             trust_remote_code=False,
             attn_implementation=attn_imp
