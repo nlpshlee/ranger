@@ -163,6 +163,7 @@ def evaluate_sft(model_name_or_path, dtype,
             if DEBUG.EVAL:
                 if (i+1) % int((total_cnt / 10)) == 0:
                     print(f'{prefix} {i+1} evaluate complet.')
+        print(f'{prefix} {total_cnt} evaluate complet.')
 
     em_accuracy = (em_cnt / total_cnt) * 100
     print(f'\n{model_name_or_path} EM : {em_accuracy:.2f}% ({em_cnt}/{total_cnt})')
@@ -175,7 +176,7 @@ def evaluate_sft(model_name_or_path, dtype,
     print(f'{model_name_or_path} FULL : {full_accuracy:.2f}% ({full_cnt}/{total_cnt})')
 
     f1_avg = np.mean(f1_scores)
-    print(f'{model_name_or_path} F1 : {f1_avg:.2f}%\n')
+    print(f'{model_name_or_path} F1 : {(f1_avg*100):.2f}%\n')
 
     if DEBUG.EVAL:
         _, eval_elapsed_str = common_utils.get_elapsed_time_ms(eval_start)
