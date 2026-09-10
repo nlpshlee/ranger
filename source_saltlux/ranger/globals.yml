@@ -31,7 +31,7 @@ RETRIEVER_SERVER_CONFIG:
 
 
 VLLM_CONFIG:
-  MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
+  MODEL_NAME: '/raid/ai/home/jsyang/dev_env/git/repos/ranger/outputs/sft/Llama-3.2-3B/merged-573'
   DEVICE: 0
   DTYPE: 'bfloat16'
   MAX_SEQ_LENGTH: 4096
@@ -39,7 +39,7 @@ VLLM_CONFIG:
   TEMPERATURE: 0.7 # RL을 위해 임시로 높은 값 설정
   TOP_P: 0.95
   TOP_K: -1
-  GPU_MEMORY_UTILIZATION: 0.3
+  GPU_MEMORY_UTILIZATION: 0.95
   N_LOG_PROB: 10 # 상위 N개 토큰의 확률 (최대 20)
 
 
@@ -58,16 +58,20 @@ CHAIN_SERVER_CONFIG:
 
 
 MODEL_CONFIG:
-  MODEL_NAME: 'meta-llama/Llama-3.2-3B-Instruct'
+  MODEL_NAME: '/raid/ai/home/jsyang/dev_env/git/repos/ranger/outputs/sft/Llama-3.2-3B/merged-573'
   DTYPE: 'bfloat16'
   MAX_SEQ_LENGTH: 4096
   LORA_R: 64
   LORA_TARGET_MODULES: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
   LORA_ALPHA: 128
-  GRADIENT_ACCUMULATION_STEPS: 64
-  LEARNING_RATE: 0.0002 # '0.00005 ~ 0.0002' 튜닝 필요
+  GRADIENT_ACCUMULATION_STEPS: 1 # 유효 배치 = batch_size(8) x GAS(1) = 쿼리 8개 x n_chains(5) = 궤적 40개
+                                 # batch_size 를 키우고 GAS 를 줄여, 유효 배치는 그대로 두면서 vLLM 병렬성만 확보
+                                 # 매 배치마다 어댑터가 저장되어 vLLM 정책이 갱신됨 (= 완전한 on-policy)
+  LEARNING_RATE: 0.00001 # GRPO + LoRA 기준값 (SFT 병합 모델 위에서 학습하므로, 크면 SFT로 얻은 능력이 무너짐)
+                         # reward가 30~50 스텝 동안 전혀 안 움직이면 0.00002 ~ 0.00003 까지만 올릴 것
   EPSILON: 0.2 # '0.2'로 고정해도 무방 (모델이 한 번의 업데이트에서 너무 급격하게 변하지 않도록 안전 장치를 거는 비율)
   KL_PENALTY: 0.01 # '0.01 ~ 0.05' (참조 모델과 너무 달라지지 않도록 하는 규제)
+  MAX_GRAD_NORM: 1.0 # gradient clipping (RL은 advantage 스케일 때문에 gradient가 튀기 쉬움, '0' 이하면 비활성화)
   USE_GRADIENT_CHECKPOINTING: true # 'true'인 경우, 메모리는 절약, 학습 속도는 느려짐
   RESUME_RUN_TIME: false # (Ex. '2025-12-03-07-13-16')
 

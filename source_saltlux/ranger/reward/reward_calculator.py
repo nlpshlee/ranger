@@ -16,17 +16,35 @@ class RewardOption:
     ALL = CORRECT | LENGTH | CONFIDENCE
 
 
+# 그룹 내 리워드가 '사실상 동일'하다고 판단하는 표준편차 임계값
+STD_EPS = 1e-6
+
+
 # 하나의 쿼리에 대한 모든 체인들의 리워드를 정규화하여 advantage 계산
 def _calculate_advantage(chain_results: List[ChainResult]):
-    # 1. NumPy 배열로 변환
-    rewards = np.array([cr._reward for cr in chain_results], dtype=np.float32)
+    '''
+        [중요] float32 로 계산하면 안 됨
+            체인들의 리워드가 전부 같을 때 (rewards - mean) 이 정확히 0 이 되지 않고
+            반올림 잔차(~1e-8)가 남는데, std 도 같은 크기라서 (std + 1e-8) 로 나누는 순간
+            순수한 수치 노이즈가 0.6 크기의 advantage 로 증폭됨
+
+            (예: rewards = [0.24] * 5 -> std=1.49e-08 -> advantages = [0.5984] * 5)
+
+            이 경우 모든 체인이 '같은 부호의 동일한 advantage' 를 받아서,
+            체인 품질과 무관하게 롤아웃 전체를 밀어 올리는 잘못된 gradient 가 됨
+    '''
+    # 1. NumPy 배열로 변환 (상쇄 오차 방지를 위해 float64)
+    rewards = np.array([cr._reward for cr in chain_results], dtype=np.float64)
 
     # 2. 평균 및 표준편차 계산
     mean_reward = rewards.mean()
     std_reward = rewards.std() if len(rewards) > 1 else 0.0
 
-    # 3. 정규화
-    advantages = (rewards - mean_reward) / (std_reward + 1e-8)
+    # 3. 정규화 (그룹 내 리워드가 사실상 동일하면 학습 신호가 없는 것이므로 advantage 를 0 으로)
+    if std_reward < STD_EPS:
+        advantages = np.zeros_like(rewards)
+    else:
+        advantages = (rewards - mean_reward) / std_reward
 
     # 4. 결과 저장
     for i, chain_result in enumerate(chain_results):

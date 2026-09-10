@@ -25,13 +25,25 @@ def load_datas(train_data_path: str, test_data_path: str, seed: int):
     return train_datas, test_datas
 
 
-work_dir = f'/home/nlpshlee/dev_env/git/repos/ranger'
+work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
 data_dir = f'{work_dir}/data'
-out_dir = f'{work_dir}/outputs/test'
+date_version = '260909-3'
+out_dir = f'{work_dir}/outputs/rl/{date_version}'
 
 train_data_path = f'{data_dir}/custom_musique_train_5000_final.jsonl'
 test_data_path = f'{data_dir}/custom_multihopqa_eval_1000.jsonl'
 train_datas, test_datas = load_datas(train_data_path, test_data_path, seed)
+
+
+'''
+    [임시] 전 구간(vLLM -> 리트리버 -> 리워드 -> 역전파 -> 어댑터 재로드) 점검용 축소 실행
+        - 전체 데이터로 돌리려면 아래 3줄과 IS_SCOPED_RUN 분기만 제거하면 됨
+'''
+IS_SCOPED_RUN = False
+
+if IS_SCOPED_RUN:
+    train_datas = train_datas[:200]
+    test_datas = test_datas[:50]
 
 
 reward_calculator = RewardCalculator(REWARD_CONFIG['reward_option'])
@@ -42,10 +54,21 @@ ranger_trainer = RangerTrainer(
     out_dir
 )
 
-epochs, batch_size, n_chains, chain_depth = 10, 1, 5, 5
+'''
+    batch_size : 한 번의 롤아웃 요청에 담기는 쿼리 수 (= vLLM 병렬성)
+        - vLLM 은 (batch_size x n_chains) 개 시퀀스를 한 번에 생성함
+        - batch_size=1 이면 한 번에 5개만 처리해서 서빙 GPU가 대부분 놀게 됨
+        - 유효 배치(batch_size x GRADIENT_ACCUMULATION_STEPS)는 8로 유지
+'''
+'''
+    epochs : RL 은 같은 쿼리를 여러 번 보면 리워드 해킹/과적합 위험이 커짐
+             프롬프트가 5000개나 되므로 2 에폭이면 충분 (1250 optimizer step)
+'''
+epochs, batch_size, n_chains, chain_depth = (1 if IS_SCOPED_RUN else 2), 8, 5, 5
 
 wandb.init(
-    project=f'RANGER-Training-260113-1',
+    project=f'RANGER-{date_version}',
+    name=f'scoped-{len(train_datas)}' if IS_SCOPED_RUN else None,
     config={
         'model_name': VLLM_CONFIG['model_name'],
         'max_seq_length': VLLM_CONFIG['max_seq_length'],

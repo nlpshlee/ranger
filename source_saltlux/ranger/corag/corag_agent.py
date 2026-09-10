@@ -1,6 +1,7 @@
 from _init import *
 
 import threading, math
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict
 from datasets import Dataset
 from transformers import PreTrainedTokenizerFast
@@ -14,6 +15,14 @@ from ranger.corag.corag_result import ChainResult, QueryResult
 
 
 class CoragAgent:
+    '''
+        문서 검색은 리트리버 서버로의 HTTP 호출이라 GPU와 무관한데,
+        체인 수만큼 순차 호출하면 depth 소요 시간의 30% 가량을 차지함 -> 병렬 처리
+        (리트리버/ES 를 과도하게 때리지 않도록 워커 수는 제한)
+    '''
+    SEARCH_MAX_WORKERS = 8
+
+
     def __init__(self,
                  engine: VllmEngine, top_k_query: int, top_k_sub_query: int, task_desc: str,
                  corpus: Dataset=corag_utils.load_corpus('corag/kilt-corpus', 'train')):
@@ -44,12 +53,17 @@ class CoragAgent:
 
 
     def _search_doc_for_query(self, query_results: List[QueryResult]):
-        for query_result in query_results:
-            searcheds: List[Dict] = corag_search.search_by_http(
-                query=query_result._query,
-                topk=self._top_k_query
-            )
+        if not query_results:
+            return
 
+        with ThreadPoolExecutor(max_workers=self.SEARCH_MAX_WORKERS) as executor:
+            searcheds_list = list(executor.map(
+                lambda qr: corag_search.search_by_http(query=qr._query, topk=self._top_k_query),
+                query_results
+            ))
+
+        # 코퍼스 접근(format_documents_for_final_answer)은 lock 을 쓰므로 순차 처리
+        for query_result, searcheds in zip(query_results, searcheds_list):
             query_result._doc_ids = [searched['id'] for searched in searcheds]
             query_result._docs = corag_utils.format_documents_for_final_answer(
                 args=self._corag_args,
@@ -90,24 +104,31 @@ class CoragAgent:
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
+                    chain_result._sub_querys_raw.append(sub_querys[idx])
+
                     normalized_sub_query = corag_utils.normalize_sub_query(sub_querys[idx])
                     chain_result._sub_querys.append(normalized_sub_query)
                     idx += 1
 
 
     def _search_doc_for_sub_query(self, query_results: List[QueryResult]):
-        for query_result in query_results:
-            for chain_result in query_result._chain_results:
-                if not chain_result._is_stop:
-                    searcheds: List[Dict] = corag_search.search_by_http(
-                        query=chain_result._sub_querys[-1],
-                        topk=self._top_k_sub_query
-                    )
-                    
-                    doc_ids = [searched['id'] for searched in searcheds]
-                    docs = [corag_utils.format_input_context(self._corpus[int(doc_id)]) for doc_id in doc_ids][::-1]
-                    chain_result._doc_ids_list.append(doc_ids)
-                    chain_result._docs_list.append(docs)
+        targets = [cr for qr in query_results for cr in qr._chain_results if not cr._is_stop]
+
+        if not targets:
+            return
+
+        with ThreadPoolExecutor(max_workers=self.SEARCH_MAX_WORKERS) as executor:
+            searcheds_list = list(executor.map(
+                lambda cr: corag_search.search_by_http(query=cr._sub_querys[-1], topk=self._top_k_sub_query),
+                targets
+            ))
+
+        # 코퍼스 접근은 순차 처리 (datasets 객체 동시 접근 회피)
+        for chain_result, searcheds in zip(targets, searcheds_list):
+            doc_ids = [searched['id'] for searched in searcheds]
+            docs = [corag_utils.format_input_context(self._corpus[int(doc_id)]) for doc_id in doc_ids][::-1]
+            chain_result._doc_ids_list.append(doc_ids)
+            chain_result._docs_list.append(docs)
 
 
     def _generate_sub_answers(self, query_results: List[QueryResult]):
@@ -136,6 +157,8 @@ class CoragAgent:
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
+                    chain_result._sub_answers_raw.append(sub_answers[idx])
+
                     normalized_sub_answer = corag_utils.normalize_answer(sub_answers[idx])
                     chain_result._sub_answers.append(normalized_sub_answer)
                     idx += 1
@@ -158,13 +181,27 @@ class CoragAgent:
                     inputs.append(final_answer_prompt)
                     chain_result._final_answer_prompts.append(final_answer_prompt)
         
+        '''
+            [중요] 최종 답변 생성 온도
+                - 평가 시 : greedy (재현성 / best-of-n 선택 기준의 일관성)
+                - 학습 시 : 다른 추론 시점과 동일하게 정책 분포에서 샘플링
+
+                  temperature=0.0 으로 만든 토큰은 정책이 '샘플링한 행동'이 아니라서
+                  policy gradient 대상이 될 수 없음 (= 로스를 전파하면 안 되는 토큰이 됨)
+                  최종 답변에도 학습이 되게 하려면 반드시 샘플링이어야 함
+        '''
+        if self._is_eval:
+            final_answer_temperature, final_answer_top_p, final_answer_top_k = 0.0, 1.0, -1
+        else:
+            final_answer_temperature, final_answer_top_p, final_answer_top_k = self._temperature, self._top_p, self._top_k
+
         final_answer_completion_output_list = self._engine.generate_batch(
             datas=inputs,
             return_completion_output=True,
             adapter_path=self._adapter_path,
-            temperature=0.0,
-            top_p=1.0,
-            top_k=-1
+            temperature=final_answer_temperature,
+            top_p=final_answer_top_p,
+            top_k=final_answer_top_k
         )
 
         idx = 0
@@ -172,6 +209,10 @@ class CoragAgent:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
                     final_answer, completion_output = final_answer_completion_output_list[idx]
+
+                    # 학습은 원문(특수 토큰 포함)으로, 정답 비교/지표는 normalize 후 값으로
+                    chain_result._final_answers_raw.append(final_answer)
+
                     normalized_final_answer = corag_utils.normalize_answer(final_answer, to_lower=True)
 
                     # answer_set 은 이미 소문자로 변환해서 저장된 상태이고, final_answer 도 normalize_answer() 에서 소문자 처리

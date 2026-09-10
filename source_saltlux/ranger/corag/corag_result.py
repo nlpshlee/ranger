@@ -51,6 +51,17 @@ class ChainResult:
     def __init__(self):
         self._sub_querys = []
         self._sub_answers = []
+
+        '''
+            [학습 전용] 모델이 실제로 생성한 원문 (normalize 이전)
+                - _sub_querys / _sub_answers / _final_answers 는 normalize_answer() 를 거치면서
+                  구두점(<, > 포함) 제거 / 소문자화 / 관사 제거가 일어나 원래 토큰 시퀀스와 달라짐
+                  (예: '<STOP> Herman Melville' -> 'stop herman melville')
+                - policy gradient 는 '실제로 샘플링한 토큰'에 걸려야 하므로 학습에는 이 원문을 사용
+        '''
+        self._sub_querys_raw = []
+        self._sub_answers_raw = []
+        self._final_answers_raw = []
         self._doc_ids_list = []             # 2차원 배열
         self._docs_list = []                # 2차원 배열
         self._final_answers = []

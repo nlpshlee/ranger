@@ -86,6 +86,7 @@ MODEL_CONFIG = {
     'learning_rate': data['MODEL_CONFIG']['LEARNING_RATE'],
     'epsilon': data['MODEL_CONFIG']['EPSILON'],
     'kl_penalty': data['MODEL_CONFIG']['KL_PENALTY'],
+    'max_grad_norm': data['MODEL_CONFIG']['MAX_GRAD_NORM'],
     'use_gradient_checkpointing': data['MODEL_CONFIG']['USE_GRADIENT_CHECKPOINTING'],
     'resume_run_time': data['MODEL_CONFIG']['RESUME_RUN_TIME']
 }

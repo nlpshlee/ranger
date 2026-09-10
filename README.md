@@ -47,6 +47,11 @@ tar -xzf elasticsearch-7.10.1-linux-x86_64.tar.gz
 elasticsearch-7.10.1/config/elasticsearch.yml
     > http.port: 8000           # 원하는 포트로 변경 (예: 8000)
     > network.host: 127.0.0.1   # 외부 접속 허용 시 필요 (기본은 localhost)
+
+# 자바 힙 메모리 설정
+elasticsearch-7.10.1/config/jvm.options
+    > -Xms16g
+    > -Xmx16g
 ```
 
 ## Run Preparation
@@ -71,6 +76,7 @@ curl http://localhost:9200
 cd source/ranger
 
 # 문서 색인 (최초 한 번만 수행)
+# pip install "numpy<2.0.0"
 python -u -m retriever_server.build_index
 ```
 

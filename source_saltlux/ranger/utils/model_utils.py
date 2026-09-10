@@ -4,7 +4,7 @@ import torch, re
 from transformers import AutoModelForCausalLM, PreTrainedTokenizerFast
 from peft import PeftModel
 
-from ranger.utils import tokenizer_utils
+from ranger.utils import tokenizer_utils, common_utils
 
 
 LOG_PREFIX = '# [LOG] model_utils'
@@ -83,6 +83,10 @@ def merge_and_save(model_name, dtype, adapter_path, save_path, device_map='auto'
         print(f'\n{LOG_PREFIX}.merge_and_save() model load : {model_name}')
         print(f'{LOG_PREFIX}.merge_and_save() adapter merge : {adapter_path}')
         print(f'{LOG_PREFIX}.merge_and_save() merged model save : {save_path}\n')
+
+    del model
+    del tokenizer
+    common_utils.clear_gpu_memory()
 
 
 def make_inputs(tokenizer: PreTrainedTokenizerFast, device: str, prompts, max_seq_length,

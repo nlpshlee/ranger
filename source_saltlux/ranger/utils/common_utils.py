@@ -26,6 +26,11 @@ def logging_error(call_path: str, e: Exception):
     logging(f"### (ERROR) {call_path} error : {e}\n", LOG_OPTION.STDERR)
 
 
+def shuffle_datas(datas: list, seed: int):
+    # 리스트를 제자리(in-place)에서 섞음 (같은 seed면 프로세스 간 동일한 순서 보장)
+    random.Random(seed).shuffle(datas)
+
+
 def check_option(option1: int, option2: int):
     if option1 == option2:
         return True

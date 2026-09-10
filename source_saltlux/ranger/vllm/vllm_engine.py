@@ -1,5 +1,6 @@
 from _init import *
 
+import math
 from typing import List, Dict, Union, Tuple, Any
 from transformers import PreTrainedTokenizerFast
 
@@ -66,14 +67,21 @@ class VllmEngine:
 
 
     def get_generated_log_prob(self, completion_output: CompletionOutput, return_all=False):
+        '''
+            [중요] 실패 시 반환값은 0.0 이 아니라 -inf 여야 함
+
+            log_prob 는 항상 음수이므로 0.0 은 '가능한 최대값'임
+            평가에서 argmax(log_probs) 로 best-of-n 체인을 고르는데,
+            빈 답변이나 logprob 누락으로 0.0 이 반환되면 그 체인이 '가장 확신한 체인'으로 뽑혀버림
+            (= 정답률이 체계적으로 깎임)
+        '''
         tok_ids = completion_output.token_ids
         logprobs_list = completion_output.logprobs
+        log_probs = []
 
         if not logprobs_list:
-            generated_log_prob = 0.0
+            generated_log_prob = -math.inf
         else:
-            log_probs = []
-
             for i, tok_id in enumerate(tok_ids):
                 if len(logprobs_list) <= i:
                     break
@@ -89,7 +97,7 @@ class VllmEngine:
                     pass
 
             if len(log_probs) == 0:
-                generated_log_prob = 0.0
+                generated_log_prob = -math.inf
             else:
                 generated_log_prob = sum(log_probs) / len(log_probs)
 
