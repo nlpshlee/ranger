@@ -46,10 +46,29 @@ class CoragAgent:
 
         self._is_eval: bool
 
+        '''
+            [토큰 비용 공정 비교] 최종 답변 생성 시점
+                False (기본) : 매 스텝마다 final_answer 생성
+                               <STOP>/<CONTINUE> 로 조기 종료를 판단하는 모델(우리 SFT/RL)은 이게 필수
+                True         : 마지막 스텝에서만 final_answer 생성
+                               조기 종료 능력이 없는 모델(순정 LLM, CoRAG 등)은 중간 최종답변이
+                               실제 추론 절차에 없는 계산이므로, 과금하면 베이스라인에 불리하게 왜곡됨
+        '''
+        self._final_answer_last_only: bool = False
+
 
     def reset(self):
         self._batch_idx = 0
         self._engine.reset()
+
+
+    @staticmethod
+    def _add_token_counts(chain_result: ChainResult, token_counts, idx: int):
+        # 엔진이 반환한 (prompt_tokens, generated_tokens) 를 체인에 누적
+        if idx < len(token_counts):
+            prompt_tokens, gen_tokens = token_counts[idx]
+            chain_result._prompt_tokens += prompt_tokens
+            chain_result._gen_tokens += gen_tokens
 
 
     def _search_doc_for_query(self, query_results: List[QueryResult]):
@@ -100,10 +119,14 @@ class CoragAgent:
             top_k=self._top_k
         )
 
+        # 직전 호출의 요청별 토큰 수 (다음 generate_batch 호출 전에 확보)
+        token_counts = self._engine._last_token_counts
+
         idx = 0
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
+                    self._add_token_counts(chain_result, token_counts, idx)
                     chain_result._sub_querys_raw.append(sub_querys[idx])
 
                     normalized_sub_query = corag_utils.normalize_sub_query(sub_querys[idx])
@@ -153,10 +176,13 @@ class CoragAgent:
             top_k=self._top_k
         )
         
+        token_counts = self._engine._last_token_counts
+
         idx = 0
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
+                    self._add_token_counts(chain_result, token_counts, idx)
                     chain_result._sub_answers_raw.append(sub_answers[idx])
 
                     normalized_sub_answer = corag_utils.normalize_answer(sub_answers[idx])
@@ -175,7 +201,10 @@ class CoragAgent:
                         past_subqueries=chain_result._sub_querys or [],
                         past_subanswers=chain_result._sub_answers or [],
                         task_desc=self._task_desc,
-                        documents=query_result._docs
+                        documents=query_result._docs,
+                        # 조기 종료를 쓰지 않는 베이스라인에는 <STOP>/<CONTINUE> 지시문을 넣지 않음
+                        # (해당 토큰을 학습한 적이 없어 답변 품질을 떨어뜨릴 수 있고, CoRAG 원 방식 프롬프트와도 달라짐)
+                        add_decide_prompt=(not self._final_answer_last_only)
                     )
 
                     inputs.append(final_answer_prompt)
@@ -204,29 +233,43 @@ class CoragAgent:
             top_k=final_answer_top_k
         )
 
+        token_counts = self._engine._last_token_counts
+
         idx = 0
         for query_result in query_results:
             for chain_result in query_result._chain_results:
                 if not chain_result._is_stop:
+                    self._add_token_counts(chain_result, token_counts, idx)
                     final_answer, completion_output = final_answer_completion_output_list[idx]
 
                     # 학습은 원문(특수 토큰 포함)으로, 정답 비교/지표는 normalize 후 값으로
                     chain_result._final_answers_raw.append(final_answer)
 
-                    normalized_final_answer = corag_utils.normalize_answer(final_answer, to_lower=True)
+                    '''
+                        [중요] 특수 토큰은 normalize '이전'의 원문에서 판정해야 함
+                            normalize_answer() 는 구두점을 전부 제거하므로 '<STOP>' 이 'stop' 이 되어
+                            평문으로 시작하는 답변("Stop signs are red")과 구분할 수 없게 됨
+                            -> 조기 종료를 학습하지 않은 모델에서 '가짜 종료'가 발생하고, 답변 앞부분까지 잘려나감
 
-                    # answer_set 은 이미 소문자로 변환해서 저장된 상태이고, final_answer 도 normalize_answer() 에서 소문자 처리
-                    if not self._is_eval:
-                        '''
-                            학습 시에, normalized_final_answer 에서 아래처럼 truncate 할지 확인 필요
-                        '''
-                        if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
-                            chain_result._is_stop = True
-                    else:
-                        is_truncated, normalized_final_answer = corag_utils.truncate_starts(normalized_final_answer, ['<continue>', '[continue]', '(continue)', 'continue'])
+                        프롬프트가 요구하는 형태는 '<STOP>' / '<CONTINUE>' (대문자 + 꺾쇠) 이므로
+                        꺾쇠/괄호 형태만 인정하고, 괄호 없는 평문 'stop' 은 종료 신호로 보지 않음
+                    '''
+                    answer_text = final_answer.strip()
+
+                    if self._is_eval:
+                        is_truncated, answer_text = corag_utils.truncate_starts(
+                            answer_text, ['<CONTINUE>', '<continue>', '[CONTINUE]', '[continue]', '(CONTINUE)', '(continue)'])
 
                         if not is_truncated:
-                            chain_result._is_stop, normalized_final_answer = corag_utils.truncate_starts(normalized_final_answer, ['<stop>', '[stop]', '(stop)', 'stop'])
+                            chain_result._is_stop, answer_text = corag_utils.truncate_starts(
+                                answer_text, ['<STOP>', '<stop>', '[STOP]', '[stop]', '(STOP)', '(stop)'])
+
+                    normalized_final_answer = corag_utils.normalize_answer(answer_text, to_lower=True)
+
+                    # answer_set 은 이미 소문자로 변환해서 저장된 상태
+                    if not self._is_eval:
+                        if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
+                            chain_result._is_stop = True
 
                     chain_result._final_answers.append(normalized_final_answer)
                     chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))
@@ -267,20 +310,28 @@ class CoragAgent:
 
 
     def _get_count_processing_chains(self, query_results: List[QueryResult], check_depth):
+        '''
+            현재 depth 에서 실제로 처리된(= 아직 중단되지 않은) 체인 수
+
+            [주의] _final_answers 로 세면 안 됨
+                final_answer 는 final_answer_last_only 모드에서 마지막 스텝에만 1개 쌓이므로,
+                depth 와 개수가 어긋나 항상 0 이 찍힘
+
+                _sub_querys 는 모드와 무관하게 매 depth 마다 정확히 1개씩 쌓이므로 이걸 기준으로 셈
+        '''
         count = 0
 
         for query_result in query_results:
             for chain_result in query_result._chain_results:
-                depth = len(chain_result._final_answers)
-
-                if check_depth == depth:
+                if check_depth == len(chain_result._sub_querys):
                     count += 1
 
         return count
 
 
-    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False) -> List[QueryResult]:
+    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False, final_answer_last_only=False) -> List[QueryResult]:
         self._batch_idx += 1
+        self._final_answer_last_only = final_answer_last_only
         self._adapter_path = adapter_path
         self._temperature = temperature
         self._top_p = top_p
@@ -314,6 +365,18 @@ class CoragAgent:
 
             # 서브 답변 생성
             self._generate_sub_answers(query_results)
+
+            '''
+                조기 종료 능력이 없는 모델은 마지막 스텝에서만 최종 답변을 생성
+                (중간 스텝의 최종 답변은 어차피 종료 판단에 쓰이지 않으므로 순수 낭비)
+            '''
+            is_last_depth = (depth == chain_depth - 1)
+
+            if self._final_answer_last_only and not is_last_depth:
+                if DEBUG.CORAG:
+                    elapsed_ms, elapsed_str = common_utils.get_elapsed_time_ms(depth_start)
+                    print(f'# [CORAG] CoragAgent.generate_batch() [{self._batch_idx} batch] [{depth+1} depth] [skip final_answer], elapsed_time : {elapsed_str} ({elapsed_ms})ms')
+                continue
 
             # 서브 스텝 마다, 최종 답변 생성하고 실제 정답과 비교
             self._check_step_final_answers(query_results)

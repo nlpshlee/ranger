@@ -14,10 +14,88 @@ from ranger.train.sft_dataset import SftDataset
 from ranger.train.sft_trainer import IGNORE_INDEX
 
 
+SOURCE_UNKNOWN = 'unknown'
+
+
+def aggregate_by_source(sources, ems, f1s, prompt_tokens=None, gen_tokens=None, sel_tokens=None, depths=None):
+    '''
+        source(hotpotqa / musique / 2wikimultihopqa / bamboogle) 별로 EM/F1 집계
+
+        평가 데이터가 4개 벤치마크를 섞은 혼합셋이라, 단일 숫자는 공개 논문 수치와 직접 비교가 불가능함
+        (혼합 비율에 따라 값이 달라지므로 반드시 벤치마크 단위로 쪼개서 비교해야 함)
+    '''
+    n_query = len(ems)
+    prompt_tokens = prompt_tokens or [0]*n_query
+    gen_tokens = gen_tokens or [0]*n_query
+    sel_tokens = sel_tokens or [0]*n_query
+    depths = depths or [0]*n_query
+
+    keys = ('em', 'f1', 'prompt_tokens', 'gen_tokens', 'sel_tokens', 'depth')
+    agg = {}
+
+    for source, em, f1, pt, gt, st, dp in zip(sources, ems, f1s, prompt_tokens, gen_tokens, sel_tokens, depths):
+        source = source or SOURCE_UNKNOWN
+        row = agg.setdefault(source, {'n': 0, **{f'{k}_sum': 0.0 for k in keys}})
+        row['n'] += 1
+        for k, v in zip(keys, (em, f1, pt, gt, st, dp)):
+            row[f'{k}_sum'] += v
+
+    def _finalize(row):
+        out = {'n': row['n']}
+        for k in keys:
+            out[k] = row[f'{k}_sum'] / row['n']
+        # 쿼리 1건을 처리하는 데 실제로 든 총 토큰 (prefill + decode, 모든 체인 합)
+        out['total_tokens'] = out['prompt_tokens'] + out['gen_tokens']
+        out[f'{"sum"}_total_tokens'] = row['prompt_tokens_sum'] + row['gen_tokens_sum']
+        return out
+
+    results = {source: _finalize(row) for source, row in agg.items()}
+
+    # 전체(혼합셋) 값도 같은 형식으로 함께 제공
+    if n_query:
+        all_row = {'n': n_query}
+        for k, vals in zip(keys, (ems, f1s, prompt_tokens, gen_tokens, sel_tokens, depths)):
+            all_row[f'{k}_sum'] = float(sum(vals))
+        results['ALL'] = _finalize(all_row)
+
+    return results
+
+
+def print_source_scores(prefix, source_scores: dict):
+    order = [k for k in ['hotpotqa', 'musique', '2wikimultihopqa', 'bamboogle'] if k in source_scores]
+    order += [k for k in sorted(source_scores) if k not in order and k != 'ALL']
+    if 'ALL' in source_scores:
+        order.append('ALL')
+
+    print(f'\n{prefix} source 별 성능 / 토큰 소비량')
+    print(f'{"source":<18}{"N":>6}{"EM":>9}{"F1":>9}{"depth":>8}'
+          f'{"prompt/q":>11}{"gen/q":>9}{"total/q":>10}{"sel(total)/q":>14}{"total(sum)":>14}')
+    print('-' * 108)
+    for source in order:
+        r = source_scores[source]
+        print(f'{source:<18}{r["n"]:>6}{r["em"]*100:>8.2f}%{r["f1"]*100:>8.2f}%{r["depth"]:>8.2f}'
+              f'{r["prompt_tokens"]:>11,.0f}{r["gen_tokens"]:>9,.1f}{r["total_tokens"]:>10,.0f}'
+              f'{r["sel_tokens"]:>14,.0f}{r["sum_total_tokens"]:>14,.0f}')
+    print(f'''
+    depth         : 선택된 체인의 평균 스텝 수 (조기 종료 여부를 보여줌)
+    prompt/q      : 쿼리 1건당 프롬프트(prefill) 토큰 - 검색 문서 포함, 실제 비용의 대부분
+    gen/q         : 쿼리 1건당 생성(decode) 토큰
+    total/q       : prompt + gen, n_chains 개 체인을 '모두' 생성한 실제 비용
+    sel(total)/q  : 그 중 최종 선택된 체인 1개가 쓴 토큰 (greedy 면 total/q 와 동일)
+    total(sum)    : 해당 source 전체 합계''')
+    print()
+
+
 def evaluate(prefix, datas, batch_size, n_chains, chain_depth, adapter_path='',
              temperature=-9, top_p=-9, top_k=-9,
              reward_calculator: RewardCalculator=None,
-             do_print=True):
+             do_print=True,
+             generate_fn=None):
+    '''
+        generate_fn : 체인 생성 함수를 교체하기 위한 훅 (기본값은 체인 서버 HTTP 호출)
+            - 학습 중에도 다른 GPU 에서 별도 모델을 평가할 수 있도록,
+              체인 서버를 거치지 않는 in-process 생성기를 주입할 수 있게 함
+    '''
 
     prefix = f'# evaluation_utils.evaluate() {prefix}'.strip()
     data_size = len(datas)
@@ -30,13 +108,22 @@ def evaluate(prefix, datas, batch_size, n_chains, chain_depth, adapter_path='',
     
     ems, f1s = [], []
     rewards, advantages = [], []
+    sources = []
+    prompt_tokens, gen_tokens, sel_tokens = [], [], []
+    depths = []
+
+    # query_id -> source 매핑 (순서에 의존하지 않도록)
+    query_id_to_source = {data['query_id']: data.get('source', SOURCE_UNKNOWN) for data in datas if 'query_id' in data}
+
+    if generate_fn is None:
+        generate_fn = request_chain_generate
 
     for batch_idx, datas_batch in enumerate(container_utils.chunks(datas, batch_size)):
         if DEBUG.EVAL and do_print:
             print(f'{prefix} {batch_idx+1} batch start\t: {common_utils.get_datetime_now()}')
             batch_start = common_utils.get_time_ms()
         
-        query_results: List[QueryResult] = request_chain_generate(
+        query_results: List[QueryResult] = generate_fn(
             datas_batch,
             batch_size,
             n_chains,
@@ -73,6 +160,20 @@ def evaluate(prefix, datas, batch_size, n_chains, chain_depth, adapter_path='',
             f1s.append(query_result._chain_results[max_idx]._f1)
             rewards.append(query_result._chain_results[max_idx]._reward)
             advantages.append(query_result._chain_results[max_idx]._advantage)
+            sources.append(query_id_to_source.get(query_result._query_id, SOURCE_UNKNOWN))
+
+            '''
+                토큰 소비량은 '실제로 생성한 모든 체인'을 합산해야 함
+                best-of-n 은 n 개를 다 만들어야 1개를 고를 수 있으므로,
+                선택된 체인만 세면 실제 추론 비용을 n 배 과소평가하게 됨
+            '''
+            prompt_tokens.append(sum(cr._prompt_tokens for cr in query_result._chain_results))
+            gen_tokens.append(sum(cr._gen_tokens for cr in query_result._chain_results))
+            sel_tokens.append(query_result._chain_results[max_idx]._prompt_tokens
+                              + query_result._chain_results[max_idx]._gen_tokens)
+
+            # 실제로 몇 스텝을 밟았는지 (final_answer 생성 시점 설정과 무관하게 sub_query 개수로 측정)
+            depths.append(len(query_result._chain_results[max_idx]._sub_querys))
         
         if DEBUG.EVAL and do_print:
             _, batch_elapsed_str = common_utils.get_elapsed_time_ms(batch_start)
@@ -81,7 +182,12 @@ def evaluate(prefix, datas, batch_size, n_chains, chain_depth, adapter_path='',
         _, eval_elapsed_str = common_utils.get_elapsed_time_ms(eval_start)
         print(f'{prefix} end : {common_utils.get_datetime_now()}, elapsed : {eval_elapsed_str}')
 
-    return ems, f1s, rewards, advantages
+    token_stats = {'prompt_tokens': prompt_tokens, 'gen_tokens': gen_tokens, 'sel_tokens': sel_tokens, 'depths': depths}
+
+    if DEBUG.EVAL and do_print:
+        print_source_scores(prefix, aggregate_by_source(sources, ems, f1s, **token_stats))
+
+    return ems, f1s, rewards, advantages, sources, token_stats
 
 
 def evaluate_sft(model_name_or_path, dtype,

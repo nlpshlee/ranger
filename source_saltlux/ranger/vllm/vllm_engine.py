@@ -30,6 +30,13 @@ class VllmEngine:
         self._called_cnt_all = 0
 
         '''
+            직전 generate_batch() 호출의 '요청별 토큰 수' (prompt_tokens, generated_tokens)
+            반환 결과와 같은 순서로 채워지며, 호출부에서 체인 단위로 누적하는 데 사용
+            (다음 generate_batch() 호출 시 덮어써지므로 호출 직후에 읽어야 함)
+        '''
+        self._last_token_counts = []
+
+        '''
             - max_loras
                 - 어댑터의 '종류' 또는 '개수'
                     - 값이 '5'라면, 5개의 서로 다른 LoRA 어댑터를 GPU 메모리에 올려둘 공간을 미리 확보
@@ -159,9 +166,16 @@ class VllmEngine:
         )
 
         results = []
+        self._last_token_counts = []
+
         for req_output in req_outputs:
             completion_output: CompletionOutput = req_output.outputs[0]
             results.append(self._make_generate_result(completion_output, return_completion_output))
+
+            # 실제 소비 토큰 (prefill + decode) 집계용
+            prompt_token_ids = getattr(req_output, 'prompt_token_ids', None) or []
+            generated_token_ids = completion_output.token_ids or []
+            self._last_token_counts.append((len(prompt_token_ids), len(generated_token_ids)))
         
         self._called_cnt += 1
         self._called_cnt_all += 1

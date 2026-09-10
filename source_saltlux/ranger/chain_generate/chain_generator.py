@@ -56,7 +56,7 @@ class ChainGenerator:
         self._chain_generate_time.reset()
 
 
-    def generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False) -> List[List[QueryResult]]:
+    def generate(self, datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False, final_answer_last_only=False) -> List[List[QueryResult]]:
         results = []
 
         for i, datas_batch in enumerate(container_utils.chunks(datas, batch_size)):
@@ -70,7 +70,8 @@ class ChainGenerator:
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
-                is_eval=is_eval
+                is_eval=is_eval,
+                final_answer_last_only=final_answer_last_only
             )
 
             results.append(query_results)

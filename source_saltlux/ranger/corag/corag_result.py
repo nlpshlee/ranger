@@ -59,6 +59,15 @@ class ChainResult:
                   (예: '<STOP> Herman Melville' -> 'stop herman melville')
                 - policy gradient 는 '실제로 샘플링한 토큰'에 걸려야 하므로 학습에는 이 원문을 사용
         '''
+        '''
+            [토큰 소비량] 이 체인이 실제로 소비한 토큰 수
+                - prompt_tokens : 프롬프트(prefill). 검색 문서가 들어가므로 실제 비용의 대부분을 차지
+                - gen_tokens    : 모델이 생성(decode)한 토큰
+                - 3가지 추론 시점(sub_query / sub_answer / final_answer) x 모든 depth 를 누적
+        '''
+        self._prompt_tokens = 0
+        self._gen_tokens = 0
+
         self._sub_querys_raw = []
         self._sub_answers_raw = []
         self._final_answers_raw = []

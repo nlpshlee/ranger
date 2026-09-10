@@ -765,7 +765,7 @@ class RangerTrainer:
 
         prefix = '[base]' if epoch == 0 else f'[{epoch} epoch]'
 
-        local_ems, local_f1s, local_rewards, local_advantages = evaluation_utils.evaluate(
+        local_ems, local_f1s, local_rewards, local_advantages, local_sources, local_token_stats = evaluation_utils.evaluate(
             prefix,
             datas,
             batch_size,
@@ -777,6 +777,9 @@ class RangerTrainer:
             top_k,
             self._reward_calculator
         )
+
+        # source(벤치마크) 별 집계 - 혼합 평가셋이라 단일 숫자는 공개 논문 수치와 직접 비교 불가
+        self._wandb_logging_evaluate_by_source(epoch, local_sources, local_ems, local_f1s, local_token_stats)
 
         # wandb 에 별도 로깅
         self._wandb_logging_evaluate(epoch, local_ems, local_f1s, local_rewards, local_advantages)
@@ -828,6 +831,35 @@ class RangerTrainer:
             self._logging(f'RangerTrainer._wandb_logging_train_batch() avg_batch_loss : {avg_batch_loss}, (gathered len : {len(all_batch_loss)})')
 
         self._accelerator.wait_for_everyone()
+
+
+    def _wandb_logging_evaluate_by_source(self, epoch, local_sources, local_ems, local_f1s, local_token_stats):
+        '''
+            [주의] source 별 집계는 '현재 프로세스가 담당한 데이터'에 대해서만 계산됨
+                   멀티 GPU 로 데이터를 나눠 처리하는 경우 프로세스마다 부분 집계가 되므로,
+                   왜곡된 값을 남기지 않도록 단일 프로세스일 때만 기록함
+                   (전체 평균 EM/F1 은 _wandb_logging_evaluate() 에서 gather 하므로 항상 정확)
+        '''
+        if 1 < self._accelerator.num_processes:
+            self._logging('RangerTrainer._wandb_logging_evaluate_by_source() multi-process -> skip (부분 집계 방지)', main_only=True)
+            return
+
+        if not self._accelerator.is_main_process:
+            return
+
+        source_scores = evaluation_utils.aggregate_by_source(local_sources, local_ems, local_f1s, **local_token_stats)
+        prefix = '[base]' if epoch == 0 else f'[{epoch} epoch]'
+        evaluation_utils.print_source_scores(f'# [TRAIN] {prefix}', source_scores)
+
+        log_data = {'epoch': epoch}
+        for source, row in source_scores.items():
+            if source == 'ALL':
+                continue
+            log_data[f'evaluate_source/{source}/em'] = row['em']
+            log_data[f'evaluate_source/{source}/f1'] = row['f1']
+            log_data[f'evaluate_source/{source}/tokens_per_query'] = row['total_tokens']
+
+        wandb.log(log_data, step=self._global_step)
 
 
     def _wandb_logging_evaluate(self, epoch, local_ems, local_f1s, local_rewards, local_advantages):
