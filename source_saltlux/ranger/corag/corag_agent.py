@@ -22,6 +22,10 @@ class CoragAgent:
     '''
     SEARCH_MAX_WORKERS = 8
 
+    # 최종 답변 앞에 붙는 특수 토큰 (프롬프트가 '<STOP>' / '<CONTINUE>' 를 요구하지만, 변형도 함께 인식)
+    CONTINUE_FORMS = ['<CONTINUE>', '<continue>', '[CONTINUE]', '[continue]', '(CONTINUE)', '(continue)']
+    STOP_FORMS = ['<STOP>', '<stop>', '[STOP]', '[stop]', '(STOP)', '(stop)']
+
 
     def __init__(self,
                  engine: VllmEngine, top_k_query: int, top_k_sub_query: int, task_desc: str,
@@ -254,22 +258,32 @@ class CoragAgent:
                         프롬프트가 요구하는 형태는 '<STOP>' / '<CONTINUE>' (대문자 + 꺾쇠) 이므로
                         꺾쇠/괄호 형태만 인정하고, 괄호 없는 평문 'stop' 은 종료 신호로 보지 않음
                     '''
+                    '''
+                        [중요] 특수 토큰 처리를 학습/평가 동일하게 수행
+
+                        (A-1) 리워드/지표 계산용 텍스트에서는 접두어를 제거
+                            - 제거하지 않으면 '<STOP> john wayne' -> 'stop john wayne' 이 되어
+                              f1('john wayne', 'stop john wayne') = 0.8 로 정답인데도 점수가 깎이고,
+                              정답 비교(exact match)도 실패함
+                            - 즉 특수 토큰을 생성할수록 손해라서, RL 이 토큰을 지우는 방향으로 학습됨
+                            - 학습 타깃은 _final_answers_raw (접두어 포함 원문) 이므로,
+                              정책은 자기가 샘플링한 <STOP> 토큰에 정상적으로 credit 을 받음
+
+                        (A-2) 종료 판정을 '모델이 생성한 특수 토큰' 으로 수행
+                            - 기존에는 학습 시 정답 일치(오라클)로만 종료시켜서,
+                              모델의 <STOP> 출력이 체인 길이에 아무 영향을 주지 못했음
+                              -> 종료가 정책의 행동이 아니게 되어 학습이 불가능했고,
+                                 LENGTH 리워드도 정책이 제어할 수 없는 값이었음
+                            - 이제 종료는 정책의 행동이며, 짧고 정확하면 리워드가 높아짐
+                    '''
                     answer_text = final_answer.strip()
 
-                    if self._is_eval:
-                        is_truncated, answer_text = corag_utils.truncate_starts(
-                            answer_text, ['<CONTINUE>', '<continue>', '[CONTINUE]', '[continue]', '(CONTINUE)', '(continue)'])
+                    is_continue, answer_text = corag_utils.truncate_starts(answer_text, self.CONTINUE_FORMS)
 
-                        if not is_truncated:
-                            chain_result._is_stop, answer_text = corag_utils.truncate_starts(
-                                answer_text, ['<STOP>', '<stop>', '[STOP]', '[stop]', '(STOP)', '(stop)'])
+                    if not is_continue:
+                        chain_result._is_stop, answer_text = corag_utils.truncate_starts(answer_text, self.STOP_FORMS)
 
                     normalized_final_answer = corag_utils.normalize_answer(answer_text, to_lower=True)
-
-                    # answer_set 은 이미 소문자로 변환해서 저장된 상태
-                    if not self._is_eval:
-                        if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
-                            chain_result._is_stop = True
 
                     chain_result._final_answers.append(normalized_final_answer)
                     chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))

@@ -27,7 +27,7 @@ def load_datas(train_data_path: str, test_data_path: str, seed: int):
 
 work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
 data_dir = f'{work_dir}/data'
-date_version = '260909-3'
+date_version = '260911-1'
 out_dir = f'{work_dir}/outputs/rl/{date_version}'
 
 train_data_path = f'{data_dir}/custom_musique_train_5000_final.jsonl'
@@ -61,10 +61,12 @@ ranger_trainer = RangerTrainer(
         - 유효 배치(batch_size x GRADIENT_ACCUMULATION_STEPS)는 8로 유지
 '''
 '''
-    epochs : RL 은 같은 쿼리를 여러 번 보면 리워드 해킹/과적합 위험이 커짐
-             프롬프트가 5000개나 되므로 2 에폭이면 충분 (1250 optimizer step)
+    epochs : 1 에폭으로 고정
+        직전 실행(260909-3)에서 2 에폭은 KL 이 1.6 -> 3.6 으로 수렴 없이 발산하고
+        학습 reward 는 정체(0.250 -> 0.233)했으며, 평가 성능이 크게 하락함
+        -> 1 에폭(625 optimizer step)에서 종료
 '''
-epochs, batch_size, n_chains, chain_depth = (1 if IS_SCOPED_RUN else 2), 8, 5, 5
+epochs, batch_size, n_chains, chain_depth = 1, 8, 5, 5
 
 wandb.init(
     project=f'RANGER-{date_version}',
