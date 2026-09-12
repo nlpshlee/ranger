@@ -2,27 +2,39 @@ from _init import *
 
 import math
 from typing import List, Dict, Union, Tuple, Any
-from transformers import AutoTokenizer, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast
 
 from vllm import LLM, SamplingParams
 from vllm.outputs import RequestOutput, CompletionOutput
-from vllm.sequence import Logprob
 from vllm.lora.request import LoRARequest
+
+from ranger.utils import tokenizer_utils
 
 
 class VllmEngine:
-    def __init__(self, model_name: str, device: str, gpu_memory_utilization: float, dtype: str,
-                 max_model_len: int, n_logprob: int):
+    def __init__(self, model_name: str, device: str, dtype: str, max_seq_length: int, max_new_tokens: int,
+                 temperature: float, top_p: float, top_k: int, gpu_memory_utilization: float, n_log_prob: int):
 
         self._model_name = model_name
         self._device = device
-        self._gpu_memory_utilization = gpu_memory_utilization
         self._dtype = dtype
-        self._max_model_len = max_model_len
-        self._n_logprob = n_logprob
+        self._max_seq_length = max_seq_length
+        self._max_new_tokens = max_new_tokens
+        self._temperature = temperature
+        self._top_p = top_p
+        self._top_k = top_k
+        self._gpu_memory_utilization = gpu_memory_utilization
+        self._n_log_prob = n_log_prob
 
         self._called_cnt = 0
         self._called_cnt_all = 0
+
+        '''
+            직전 generate_batch() 호출의 '요청별 토큰 수' (prompt_tokens, generated_tokens)
+            반환 결과와 같은 순서로 채워지며, 호출부에서 체인 단위로 누적하는 데 사용
+            (다음 generate_batch() 호출 시 덮어써지므로 호출 직후에 읽어야 함)
+        '''
+        self._last_token_counts = []
 
         '''
             - max_loras
@@ -34,85 +46,73 @@ class VllmEngine:
         self._llm = LLM(
             model=self._model_name,
             device=self._device,
-            gpu_memory_utilization=self._gpu_memory_utilization,
             dtype=self._dtype,
-            max_model_len=self._max_model_len,                      # 없으면, 에러남
-            enable_prefix_caching=True,                             # 프리픽스 캐싱 활성화(성능 향상)
-            enable_lora=True
-            # max_loras=1
+            max_model_len=self._max_seq_length, # 없으면, 에러남
+            gpu_memory_utilization=self._gpu_memory_utilization,
+            enable_lora=True,
+            enable_prefix_caching=False, # 프리픽스 캐싱 활성화(속도 향상), 근데 한 번 어댑터 주면 캐싱되기 때문에 사용 X
+            max_loras=1,
+            max_lora_rank=MODEL_CONFIG['lora_r']
+            # enforce_eager=True # CUDA Graph 비활성화 (속도는 조금 느려짐, 재현성은 높아짐), 해결 안됨
         )
-        self._tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(self._model_name)
-        self._tok_id_end = self._tokenizer.eos_token_id
-    
+
+        self._tokenizer: PreTrainedTokenizerFast = tokenizer_utils.load_tokenizer(self._model_name)
+
+        # LoRA 어댑터 ID (매번 다르게 줘야 함. 1씩 증가해서 사용)
+        self._lora_id = 0
+
+        # 검증 과정에서 재현이 필요한 경우에만 설정 (완벽한 재현은 안됨...)
+        self._seed = -9
+
 
     def reset(self):
         self._called_cnt = 0
 
 
-    def _truncate_prompts(self, prompts: List[str]) -> List[str]:
-        truncated_prompts = []
-
-        for prompt in prompts:
-            token_ids = self._tokenizer(
-                prompt,
-                truncation=True,
-                max_length=self._max_model_len,
-                add_special_tokens=True
-            )['input_ids']
-
-            if token_ids[0] == token_ids[1] == 128000:
-                token_ids = token_ids[1:]
-
-            truncated_prompt = self._tokenizer.decode(token_ids, skip_special_tokens=False)
-            truncated_prompts.append(truncated_prompt)
-        
-        return truncated_prompts
-
-
     def _get_generated_text(self, completion_output: CompletionOutput) -> str:
         return completion_output.text.strip()
-    
 
-    def get_generated_log_like(self, completion_output: CompletionOutput, text='', tok_ids=[], missing_log_prob=math.log(1e-9), return_all=False):
-        # 'text'가 주어지면, 'text'를 토크나이징하고 likelihood 계산
-        if len(text) > 0:
-            tok_ids: list = self._tokenizer(text, add_special_tokens=False)['input_ids']
-        # 'text'도 주어지지 않고, 'tok_ids'도 주어지지 않으면, 'completion_output'에 내장되어 있는 'tok_ids' 사용
-        elif len(tok_ids) == 0:
-            tok_ids: list = completion_output.token_ids
-        
-        if tok_ids[-1] != self._tok_id_end:
-            tok_ids.append(self._tok_id_end)
 
+    def get_generated_log_prob(self, completion_output: CompletionOutput, return_all=False):
+        '''
+            [중요] 실패 시 반환값은 0.0 이 아니라 -inf 여야 함
+
+            log_prob 는 항상 음수이므로 0.0 은 '가능한 최대값'임
+            평가에서 argmax(log_probs) 로 best-of-n 체인을 고르는데,
+            빈 답변이나 logprob 누락으로 0.0 이 반환되면 그 체인이 '가장 확신한 체인'으로 뽑혀버림
+            (= 정답률이 체계적으로 깎임)
+        '''
+        tok_ids = completion_output.token_ids
+        logprobs_list = completion_output.logprobs
         log_probs = []
-        completion_output_log_prob_len = len(completion_output.logprobs)
 
-        for tok_idx in range(len(tok_ids)):
-            tok_id = tok_ids[tok_idx]
+        if not logprobs_list:
+            generated_log_prob = -math.inf
+        else:
+            for i, tok_id in enumerate(tok_ids):
+                if len(logprobs_list) <= i:
+                    break
 
-            # 모델이 생성한 텍스트보다 정답이 더 긴 경우
-            if completion_output_log_prob_len <= tok_idx:
-                log_probs.append(missing_log_prob)
-                continue
+                # 현재 토큰 위치에서의 top-k 로그 확률
+                tok_logprobs = logprobs_list[i]
 
-            # 'tok_idx'번째 위치에서의 전체 토큰 확률 분포 (실제로는 top-k)
-            all_tok_log_prob = completion_output.logprobs[tok_idx]
+                # top-k 안에 해당 토큰이 있다면 해당 토큰의 생성 확률 저장
+                if tok_id in tok_logprobs.keys():
+                    log_probs.append(tok_logprobs[tok_id].logprob)
+                # top-k 안에 해당 토큰이 없다면 (거의 가능성 제로)
+                else:
+                    pass
 
-            if tok_id in all_tok_log_prob.keys():
-                log_prob: Logprob = all_tok_log_prob[tok_id]
-                log_prob = log_prob.logprob
+            if len(log_probs) == 0:
+                generated_log_prob = -math.inf
             else:
-                log_prob = missing_log_prob
-            
-            log_probs.append(log_prob)
-        
-        log_like = sum(log_probs) / len(log_probs)
+                generated_log_prob = sum(log_probs) / len(log_probs)
 
         if return_all:
             toks = [self._tokenizer.decode(tok_id) for tok_id in tok_ids]
-            return log_like, toks, tok_ids, log_probs
+            return generated_log_prob, toks, tok_ids, log_probs
         else:
-            return log_like
+            return generated_log_prob
 
 
     def _make_generate_result(self, completion_output: CompletionOutput, return_completion_output: bool) -> Union[str, Tuple[str, Any]]:
@@ -124,31 +124,34 @@ class VllmEngine:
             return generated_text, completion_output
 
 
-    def generate_batch(self, messages: List[List[Dict]], max_token_gen: int, temperature: int,
-                       return_completion_output=False, adapter_path='', do_print=True) -> List[Union[str, Tuple[str, Any]]]:
+    def generate_batch(self, datas: List[List[Dict]], return_completion_output=False, adapter_path='', temperature=-9, top_p=-9, top_k=-9) -> List[Union[str, Tuple[str, Any]]]:
 
         # LoRA Adapter 추가 코드
         if os.path.exists(adapter_path):
-            lora_request = LoRARequest('RANGER_Policy', 1, adapter_path)
+            self._lora_id += 1
+            lora_request = LoRARequest('Ranger policy', self._lora_id, adapter_path)
         else:
             lora_request = None
         
         sampling_params = SamplingParams(
-            max_tokens=max_token_gen,
-            temperature=temperature,
-            logprobs=self._n_logprob if return_completion_output else None
+            max_tokens=self._max_new_tokens,
+            temperature=self._temperature if temperature == -9 else temperature,
+            top_p=self._top_p if top_p == -9 else top_p,
+            top_k=self._top_k if top_k == -9 else top_k,
+            logprobs=self._n_log_prob if return_completion_output else None
         )
 
-        # LoRA Adapter 추가 코드
-        prompts = [self._tokenizer.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
+        if self._seed != -9:
+            sampling_params.seed = self._seed
 
         # vllm은 내부적으로 입력 길이 제한을 하지 않음 -> 직접 잘라서 넘겨줘야 함...
-        truncated_prompts = self._truncate_prompts(prompts)
+        prompt_token_ids_list = tokenizer_utils.tokenize_apply_chat_template_and_truncate(datas, self._tokenizer, self._max_seq_length)
+        vllm_inputs = [{'prompt_token_ids': prompt_token_ids} for prompt_token_ids in prompt_token_ids_list]
 
         # LoRA Adapter 추가 코드
         '''
             chat() -> generate()
-                messages -> prompts
+                datas -> prompts
                 (+) lora_request
             
             chat() 함수에 lora_request 전달 불가능
@@ -156,22 +159,29 @@ class VllmEngine:
                 - LoRA를 동적으로 적용하려면 반드시 llm.generate() 사용
         '''
         req_outputs: List[RequestOutput] = self._llm.generate(
-            truncated_prompts,
+            prompts=vllm_inputs,
             sampling_params=sampling_params,
             lora_request=lora_request,
             use_tqdm=False
         )
 
         results = []
+        self._last_token_counts = []
+
         for req_output in req_outputs:
             completion_output: CompletionOutput = req_output.outputs[0]
             results.append(self._make_generate_result(completion_output, return_completion_output))
+
+            # 실제 소비 토큰 (prefill + decode) 집계용
+            prompt_token_ids = getattr(req_output, 'prompt_token_ids', None) or []
+            generated_token_ids = completion_output.token_ids or []
+            self._last_token_counts.append((len(prompt_token_ids), len(generated_token_ids)))
         
         self._called_cnt += 1
         self._called_cnt_all += 1
-        if do_print:
+        if DEBUG.VLLM:
             if self._called_cnt_all % 100 == 0:
-                print(f'# VllmEngine.generate_batch() [vllm] called_cnt : {self._called_cnt}, called_cnt_all : {self._called_cnt_all}')
+                print(f'# [VLLM] VllmEngine.generate_batch() vllm called_cnt : {self._called_cnt}, called_cnt_all : {self._called_cnt_all}')
         
         return results
 
