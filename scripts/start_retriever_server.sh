@@ -8,7 +8,7 @@ LOG_DIR="$PARENT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 # 최상위 디렉토리 강제 설정
-APP_ROOT="$PARENT_DIR/source_saltlux/ranger"
+APP_ROOT="$PARENT_DIR/source/ranger"
 
 # Uvicorn 실행
 uvicorn retriever_server.serve:app \

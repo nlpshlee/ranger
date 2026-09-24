@@ -9,3 +9,4 @@ logs
 output*
 wandb
 unsloth_compiled_cache
+backup/*
