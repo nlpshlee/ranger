@@ -6,7 +6,7 @@ from ranger.utils import json_utils
 from ranger.corag.corag_result import QueryResult
 
 
-def request_chain_generate(datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False):
+def request_chain_generate(datas, batch_size, n_chains, chain_depth, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False, sft_data_mode=False):
     url = CHAIN_SERVER_CONFIG['url_full_generate']
     headers = {'Content-Type': 'application/json'}
 
@@ -20,7 +20,8 @@ def request_chain_generate(datas, batch_size, n_chains, chain_depth, adapter_pat
         'temperature': temperature,
         'top_p': top_p,
         'top_k': top_k,
-        'is_eval': is_eval
+        'is_eval': is_eval,
+        'sft_data_mode': sft_data_mode    # True : SFT 데이터 생성 (오라클 종료), RL/평가에서는 항상 False
     }
 
     if DEBUG.CHAIN_CLIENT:

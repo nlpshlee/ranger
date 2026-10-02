@@ -207,8 +207,25 @@ class RangerTrainer:
         # 6. Optimizer 초기화
         self._optimizer = AdamW([p for p in self._model.parameters() if p.requires_grad], lr=self._learning_rate)
 
-        # 7. Accelerator Prepare (모델과 옵티마이저를 Accelerator가 관리하도록 래핑)
-        self._model, self._optimizer = self._accelerator.prepare(self._model, self._optimizer)
+        # 7. Accelerator Prepare
+        '''
+            [멀티 GPU] 모델을 DDP 로 감싸지 않고, gradient 동기화를 직접 수행 (_sync_gradients)
+
+            DDP 는 backward / forward 마다 랭크 간 통신(all-reduce, buffer broadcast)을 하므로
+            모든 랭크가 '같은 횟수'로 forward/backward 를 호출해야 함
+            그런데 이 학습은 랭크마다 샘플 수와 길이가 달라서
+                - 마이크로 배치 개수(= forward/backward 횟수)가 랭크마다 다르고
+                - advantage 가 전부 0 인 랭크는 backward 를 한 번도 안 함
+            -> DDP 로 감싸면 통신 횟수가 어긋나서 한쪽 랭크가 영원히 대기(교착)함
+
+            그래서 멀티 GPU 에서는 각 랭크가 로컬에서 gradient 를 쌓고,
+            optimizer step 직전에 한 번만 all-reduce 로 합산함 (단일 GPU 동작은 기존과 동일)
+        '''
+        if 1 < self._accelerator.num_processes:
+            self._broadcast_trainable_parameters()
+            self._optimizer = self._accelerator.prepare(self._optimizer)
+        else:
+            self._model, self._optimizer = self._accelerator.prepare(self._model, self._optimizer)
 
         # 8. Resume Optimizer State
         if os.path.exists(self._resume_optimizer_path):
@@ -557,17 +574,67 @@ class RangerTrainer:
         return input_ids, attention_mask, completion_mask, advantage_tensor, weight_tensor
 
 
+    def _broadcast_trainable_parameters(self):
+        '''
+            [멀티 GPU] rank 0 의 학습 파라미터(LoRA)를 모든 랭크에 복사
+
+            DDP 는 생성 시점에 이 복사를 자동으로 해주지만, 여기서는 DDP 를 쓰지 않으므로 직접 수행
+            (시드가 같으면 초기값도 같겠지만, 그건 보장이 아니라 우연에 기대는 것이므로 명시적으로 맞춤)
+            학습 파라미터가 한 번이라도 랭크마다 다르면, 같은 gradient 로 업데이트해도 영원히 다른 모델이 됨
+        '''
+        for param in self._model.parameters():
+            if param.requires_grad:
+                torch.distributed.broadcast(param.data, src=0)
+
+
+    def _sync_gradients(self):
+        '''
+            [멀티 GPU] 랭크별로 쌓인 LoRA gradient 를 합산 (optimizer step 직전에 한 번)
+
+            - 손실을 이미 '전역 체인 수' 로 나눴으므로 평균이 아니라 합(SUM)이 정확한 값
+            - backward 를 한 번도 안 한 랭크는 grad 가 None 이므로 0 으로 채워서 참여시킴
+            - 파라미터 순서는 모든 랭크에서 동일하므로 all-reduce 호출 순서가 어긋나지 않음
+            - 모든 랭크가 같은 시점에 호출해야 함 (train() 에서 update step 마다 1회)
+        '''
+        if self._accelerator.num_processes <= 1:
+            return
+
+        for param in self._model.parameters():
+            if not param.requires_grad:
+                continue
+
+            if param.grad is None:
+                param.grad = torch.zeros_like(param)
+
+            torch.distributed.all_reduce(param.grad, op=torch.distributed.ReduceOp.SUM)
+
+
     def _train_batch(self, query_results: List[QueryResult]):
         # 1. 데이터 준비 (실제 생성에 쓰인 프롬프트 + 실제 생성된 텍스트)
         samples = self._build_train_samples(query_results)
         n_samples = len(samples)
 
+        # 체인 단위 정규화를 위한 가중치 합 (= 학습 대상 체인 수)
+        local_total_weight = sum(sample['weight'] for sample in samples)
+
+        '''
+            [멀티 GPU] 정규화 분모는 '모든 랭크의 체인 수 합' 을 사용
+                - 랭크마다 자기 체인 수로 나누면, 체인이 적은 랭크의 체인이 더 큰 가중치를 받게 됨
+                - 전역 분모로 나누고 _sync_gradients() 에서 합산(SUM)하면, 전체 체인에 대한 정확한 평균이 됨
+
+            이 집계는 통신이므로 아래 early return 보다 '먼저' 모든 랭크가 호출해야 함
+            (샘플이 0 인 랭크만 빠지면 교착)
+        '''
+        total_weight = local_total_weight
+
+        if 1 < self._accelerator.num_processes:
+            t_weight = torch.tensor([local_total_weight], device=self._device, dtype=torch.float32)
+            total_weight = float(self._accelerator.reduce(t_weight, reduction='sum').item())
+
         if n_samples == 0:
             self._logging(f'RangerTrainer._train_batch() no trainable sample (all advantages are 0) -> skip')
             return 0.0, {'n_samples': 0, 'n_micro_batches': 0, 'n_chains': 0, 'kl': 0.0, 'completion_len': 0.0}
 
-        # 체인 단위 정규화를 위한 전체 가중치 합 (= 학습 대상 체인 수)
-        total_weight = sum(sample['weight'] for sample in samples)
         sum_loss, sum_kl = 0.0, 0.0
 
         micro_batches = self._make_micro_batches(samples)
@@ -609,7 +676,7 @@ class RangerTrainer:
         stats = {
             'n_samples': n_samples,
             'n_micro_batches': len(micro_batches),
-            'n_chains': round(total_weight),      # advantage != 0 이라 실제로 학습에 쓰인 체인 수
+            'n_chains': round(local_total_weight),    # advantage != 0 이라 실제로 학습에 쓰인 체인 수 (이 랭크 기준)
             'kl': sum_kl / n_samples,
             'completion_len': sum(len(s['completion_ids']) for s in samples) / n_samples
         }
@@ -620,6 +687,18 @@ class RangerTrainer:
 
 
     def train(self, train_datas, test_datas, epochs, batch_size, n_chains, chain_depth):
+        '''
+            [멀티 GPU] 데이터 수를 GPU 수의 배수로 맞춤
+                랭크마다 데이터 수가 다르면 배치 수가 달라지고,
+                배치마다 수행하는 랭크 간 통신(가중치 합, gradient 합, 로그 gather) 횟수가 어긋나 교착됨
+                (단일 GPU 에서는 아무것도 잘리지 않음)
+        '''
+        num_processes = self._accelerator.num_processes
+
+        if 1 < num_processes:
+            train_datas = train_datas[:len(train_datas) - (len(train_datas) % num_processes)]
+            test_datas = test_datas[:len(test_datas) - (len(test_datas) % num_processes)]
+
         with self._accelerator.split_between_processes(train_datas) as train_datas_sharded:
             train_datas = train_datas_sharded
         with self._accelerator.split_between_processes(test_datas) as test_datas_sharded:
@@ -711,7 +790,18 @@ class RangerTrainer:
                     쌓인 gradient 자체가 없으므로 optimizer step / 저장을 건너뜀
                         - 의미 없는 어댑터 재저장(1GB 디스크 쓰기)과 vLLM 재로드를 피함
                 '''
-                if (is_update_step or is_last_step) and (accum_n_samples == 0):
+                '''
+                    [멀티 GPU] 스킵 여부는 모든 랭크가 '같은 결론' 을 내야 함
+                        한 랭크만 샘플이 0 이라서 스킵하고 다른 랭크는 _sync_gradients() 에 들어가면 교착
+                        -> 전 랭크의 누적 샘플 수 합으로 판단
+                '''
+                global_accum_n_samples = accum_n_samples
+
+                if (is_update_step or is_last_step) and (1 < self._accelerator.num_processes):
+                    t_accum = torch.tensor([accum_n_samples], device=self._device, dtype=torch.long)
+                    global_accum_n_samples = int(self._accelerator.reduce(t_accum, reduction='sum').item())
+
+                if (is_update_step or is_last_step) and (global_accum_n_samples == 0):
                     self._logging(f'RangerTrainer.train() {epoch} epoch, {batch_idx+1} batch no accumulated gradient -> skip optimizer step')
 
                 elif is_update_step or is_last_step:
@@ -720,6 +810,9 @@ class RangerTrainer:
                         clip_grad_norm_() 반환값(clipping 전 norm)은 'gradient가 실제로 흐르는지' 확인하는 핵심 지표
                             - 계속 0.0 이면 LoRA에 gradient가 안 흐르는 것(= 학습이 전혀 안 되는 상태)
                     '''
+                    # 멀티 GPU : 랭크별 gradient 합산 (단일 GPU 에서는 아무 동작 안 함)
+                    self._sync_gradients()
+
                     if 0 < self._max_grad_norm:
                         grad_norm = float(self._accelerator.clip_grad_norm_(self._model.parameters(), self._max_grad_norm))
 
@@ -802,7 +895,8 @@ class RangerTrainer:
         if self._accelerator.is_main_process:
             avg_reward = all_reward.mean().item()
             avg_advantage = all_advantage.mean().item()
-            avg_batch_loss = all_batch_loss.mean().item()
+            # 랭크별 손실은 '전역 체인 수' 로 나눈 부분합이므로, 합이 전체 배치 손실 (단일 GPU 면 그대로)
+            avg_batch_loss = all_batch_loss.sum().item()
 
             '''
                 [진단 지표]

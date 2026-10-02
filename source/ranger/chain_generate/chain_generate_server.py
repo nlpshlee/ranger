@@ -1,5 +1,6 @@
 from _init import *
 
+import os, threading
 from typing import List
 from flask import Flask, request, jsonify
 from flask_restful import Api, Resource
@@ -27,6 +28,18 @@ app = Flask(__name__)
 api = Api(app)
 
 
+'''
+    [중요] 요청 직렬화
+        Flask app.run() 은 기본값이 threaded=True 라서, 요청이 동시에 들어오면 스레드에서 병렬 처리됨
+        그런데 아래 두 객체는 동시 호출에 안전하지 않음
+            - CoragAgent : 요청마다 _adapter_path / _is_eval / _temperature 등을 인스턴스 변수로 덮어씀
+            - vLLM LLM.generate() : 오프라인 엔진이라 여러 스레드가 동시에 호출하면 결과가 섞이거나 멈출 수 있음
+        멀티 GPU 학습에서는 랭크마다 동시에 요청을 보내므로, 한 번에 하나씩만 처리하도록 잠금
+        (단일 GPU 학습은 요청이 하나씩만 오므로 동작 변화 없음)
+'''
+_generate_lock = threading.Lock()
+
+
 class ChainGenerateServer(Resource):
     def post(self):
         req_json = request.get_json()
@@ -41,18 +54,21 @@ class ChainGenerateServer(Resource):
         top_p = req_json.get('top_p', -9)
         top_k = req_json.get('top_k', -9)
         is_eval = req_json.get('is_eval', False)
+        sft_data_mode = req_json.get('sft_data_mode', False)     # SFT 데이터 생성 전용 (오라클 종료)
 
-        results: List[List[QueryResult]] = chain_generator.generate(
-            datas=datas,
-            batch_size=batch_size,
-            n_chains=n_chains,
-            chain_depth=chain_depth,
-            adapter_path=adapter_path,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            is_eval=is_eval
-        )
+        with _generate_lock:
+            results: List[List[QueryResult]] = chain_generator.generate(
+                datas=datas,
+                batch_size=batch_size,
+                n_chains=n_chains,
+                chain_depth=chain_depth,
+                adapter_path=adapter_path,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                is_eval=is_eval,
+                sft_data_mode=sft_data_mode
+            )
 
         serialized_results = self._serialize(results)
         
@@ -75,7 +91,8 @@ class ChainGenerateServer(Resource):
 
 class ChainGenerateReset(Resource):
     def post(self):
-        chain_generator.reset()
+        with _generate_lock:
+            chain_generator.reset()
 
         return jsonify({'status': 'success'})
 
@@ -96,7 +113,9 @@ if DEBUG.CHAIN_SERVER:
 '''
 if __name__ == '__main__':
     host = CHAIN_SERVER_CONFIG['host']
-    port = CHAIN_SERVER_CONFIG['port']
+
+    # GPU 별로 체인 서버를 여러 개 띄울 때 포트만 바꿀 수 있도록 (지정하지 않으면 globals.yml 값 그대로)
+    port = int(os.environ.get('CHAIN_SERVER_PORT', CHAIN_SERVER_CONFIG['port']))
     debug = CHAIN_SERVER_CONFIG['debug']
 
     app.run(host=host, port=port, debug=debug)

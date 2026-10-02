@@ -27,8 +27,8 @@ def load_datas(train_data_path: str, test_data_path: str, seed: int):
 
 work_dir = f'/raid/ai/home/jsyang/dev_env/git/repos/ranger'
 data_dir = f'{work_dir}/data'
-date_version = '260911-1'
-out_dir = f'{work_dir}/outputs/rl/{date_version}'
+version = '260923-8B'
+out_dir = f'{work_dir}/outputs/rl/{version}'
 
 train_data_path = f'{data_dir}/custom_musique_train_5000_final.jsonl'
 test_data_path = f'{data_dir}/custom_multihopqa_eval_1000.jsonl'
@@ -66,10 +66,22 @@ ranger_trainer = RangerTrainer(
         학습 reward 는 정체(0.250 -> 0.233)했으며, 평가 성능이 크게 하락함
         -> 1 에폭(625 optimizer step)에서 종료
 '''
-epochs, batch_size, n_chains, chain_depth = 1, 8, 5, 5
+epochs, n_chains, chain_depth = 1, 5, 5
 
+'''
+    [멀티 GPU] 유효 배치(= optimizer step 1회에 쓰이는 쿼리 수)를 GPU 개수와 무관하게 8로 고정
+        - 랭크마다 batch_size 개를 처리하므로, 랭크당 batch_size = 8 / GPU 수
+        - 3B RL 실험과 같은 학습 조건(스텝당 쿼리 8개, 1 에폭 625 스텝)을 유지해야 비교가 공정함
+'''
+EFFECTIVE_BATCH_SIZE = 8
+num_processes = ranger_trainer._accelerator.num_processes
+assert EFFECTIVE_BATCH_SIZE % num_processes == 0, f'EFFECTIVE_BATCH_SIZE({EFFECTIVE_BATCH_SIZE}) 는 GPU 수({num_processes})로 나누어떨어져야 함'
+batch_size = EFFECTIVE_BATCH_SIZE // num_processes
+
+# wandb 는 메인 프로세스만 기록 (다른 랭크까지 init 하면 빈 run 이 따로 생김)
 wandb.init(
-    project=f'RANGER-{date_version}',
+    mode=None if ranger_trainer._accelerator.is_main_process else 'disabled',
+    project=f'RANGER-{version}',
     name=f'scoped-{len(train_datas)}' if IS_SCOPED_RUN else None,
     config={
         'model_name': VLLM_CONFIG['model_name'],
@@ -84,6 +96,8 @@ wandb.init(
         'gradient_accumulation_steps': MODEL_CONFIG['gradient_accumulation_steps'],
         'epochs': epochs,
         'batch_size': batch_size,
+        'effective_batch_size': EFFECTIVE_BATCH_SIZE,
+        'num_processes': num_processes,
         'n_chains': n_chains,
         'chain_depth': chain_depth
     }

@@ -60,6 +60,21 @@ class CoragAgent:
         '''
         self._final_answer_last_only: bool = False
 
+        '''
+            [SFT 데이터 생성 모드] 3B SFT 데이터를 만들 때의 원래 동작을 그대로 재현
+                - 최종 답변 프롬프트에 <STOP>/<CONTINUE> 지시문을 넣지 않음 (평문 답변)
+                - 최종 답변은 greedy 로 생성
+                - 최종 답변을 그대로 정규화하고, '정답과 일치하면' 체인을 종료 (오라클 종료)
+
+            이 모드에서 is_stop=True 는 '정답에 도달했다' 는 뜻이며,
+            SFT 데이터 선택(make_train_data_for_sft.select_candidate)이 바로 이 의미에 의존함
+            (<STOP>/<CONTINUE> 라벨과 지시문은 SFT 데이터를 만들 때 add_train_data() 에서 붙임)
+
+            RL 롤아웃(is_eval=False)은 '모델이 생성한 <STOP>' 으로 종료해야 하므로 이 모드를 쓰면 안 됨
+            -> 종료 규칙을 is_eval 하나에 묶지 않고 명시적으로 분리
+        '''
+        self._sft_data_mode: bool = False
+
 
     def reset(self):
         self._batch_idx = 0
@@ -208,7 +223,8 @@ class CoragAgent:
                         documents=query_result._docs,
                         # 조기 종료를 쓰지 않는 베이스라인에는 <STOP>/<CONTINUE> 지시문을 넣지 않음
                         # (해당 토큰을 학습한 적이 없어 답변 품질을 떨어뜨릴 수 있고, CoRAG 원 방식 프롬프트와도 달라짐)
-                        add_decide_prompt=(not self._final_answer_last_only)
+                        # SFT 데이터 생성 모드도 지시문 없이 생성 (3B 데이터 생성 당시와 동일, 지시문은 SFT 데이터 구성 시 추가)
+                        add_decide_prompt=(not self._final_answer_last_only) and (not self._sft_data_mode)
                     )
 
                     inputs.append(final_answer_prompt)
@@ -223,7 +239,7 @@ class CoragAgent:
                   policy gradient 대상이 될 수 없음 (= 로스를 전파하면 안 되는 토큰이 됨)
                   최종 답변에도 학습이 되게 하려면 반드시 샘플링이어야 함
         '''
-        if self._is_eval:
+        if self._is_eval or self._sft_data_mode:
             final_answer_temperature, final_answer_top_p, final_answer_top_k = 0.0, 1.0, -1
         else:
             final_answer_temperature, final_answer_top_p, final_answer_top_k = self._temperature, self._top_p, self._top_k
@@ -276,14 +292,25 @@ class CoragAgent:
                                  LENGTH 리워드도 정책이 제어할 수 없는 값이었음
                             - 이제 종료는 정책의 행동이며, 짧고 정확하면 리워드가 높아짐
                     '''
-                    answer_text = final_answer.strip()
+                    if self._sft_data_mode:
+                        '''
+                            [SFT 데이터 생성 모드] 3B SFT 데이터 생성 당시(원본 코드)와 동일한 처리
+                                - 지시문이 없으므로 모델은 평문으로 답하고, 접두어 처리 없이 그대로 정규화
+                                - 정답과 일치하면 종료 (answer_set 은 이미 소문자로 정규화된 상태)
+                        '''
+                        normalized_final_answer = corag_utils.normalize_answer(final_answer, to_lower=True)
 
-                    is_continue, answer_text = corag_utils.truncate_starts(answer_text, self.CONTINUE_FORMS)
+                        if corag_utils.compare_answers(query_result._answer_set, normalized_final_answer):
+                            chain_result._is_stop = True
+                    else:
+                        answer_text = final_answer.strip()
 
-                    if not is_continue:
-                        chain_result._is_stop, answer_text = corag_utils.truncate_starts(answer_text, self.STOP_FORMS)
+                        is_continue, answer_text = corag_utils.truncate_starts(answer_text, self.CONTINUE_FORMS)
 
-                    normalized_final_answer = corag_utils.normalize_answer(answer_text, to_lower=True)
+                        if not is_continue:
+                            chain_result._is_stop, answer_text = corag_utils.truncate_starts(answer_text, self.STOP_FORMS)
+
+                        normalized_final_answer = corag_utils.normalize_answer(answer_text, to_lower=True)
 
                     chain_result._final_answers.append(normalized_final_answer)
                     chain_result._log_probs.append(self._engine.get_generated_log_prob(completion_output))
@@ -343,9 +370,18 @@ class CoragAgent:
         return count
 
 
-    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False, final_answer_last_only=False) -> List[QueryResult]:
+    def generate_batch(self, datas: list, n_chains: int, chain_depth: int, adapter_path='', temperature=-9, top_p=-9, top_k=-9, is_eval=False, final_answer_last_only=False, sft_data_mode=False) -> List[QueryResult]:
+        '''
+            SFT 데이터 생성 모드는 오라클 종료를 쓰므로 평가/베이스라인 모드와 함께 쓸 수 없음
+                - is_eval               : 모델의 <STOP> 으로 종료해야 함
+                - final_answer_last_only : 중간 스텝에 최종 답변이 없어 정답 비교(종료) 자체가 불가능
+        '''
+        if sft_data_mode and (is_eval or final_answer_last_only):
+            raise ValueError(f'sft_data_mode 는 is_eval({is_eval}) / final_answer_last_only({final_answer_last_only}) 와 함께 사용할 수 없음')
+
         self._batch_idx += 1
         self._final_answer_last_only = final_answer_last_only
+        self._sft_data_mode = sft_data_mode
         self._adapter_path = adapter_path
         self._temperature = temperature
         self._top_p = top_p
