@@ -209,7 +209,14 @@ class CoragAgent:
                     idx += 1
 
 
-    def _check_step_final_answers(self, query_results: List[QueryResult]):
+    def _check_step_final_answers(self, query_results: List[QueryResult], add_decide_prompt=None):
+        # add_decide_prompt 가 None 이면 모드에 따라 결정
+        #   - 조기 종료를 쓰지 않는 베이스라인에는 <STOP>/<CONTINUE> 지시문을 넣지 않음
+        #     (해당 토큰을 학습한 적이 없어 답변 품질을 떨어뜨릴 수 있고, CoRAG 원 방식 프롬프트와도 달라짐)
+        #   - SFT 데이터 생성 모드도 지시문 없이 생성 (3B 데이터 생성 당시와 동일, 지시문은 SFT 데이터 구성 시 추가)
+        if add_decide_prompt is None:
+            add_decide_prompt = (not self._final_answer_last_only) and (not self._sft_data_mode)
+
         inputs = []
 
         for query_result in query_results:
@@ -221,10 +228,7 @@ class CoragAgent:
                         past_subanswers=chain_result._sub_answers or [],
                         task_desc=self._task_desc,
                         documents=query_result._docs,
-                        # 조기 종료를 쓰지 않는 베이스라인에는 <STOP>/<CONTINUE> 지시문을 넣지 않음
-                        # (해당 토큰을 학습한 적이 없어 답변 품질을 떨어뜨릴 수 있고, CoRAG 원 방식 프롬프트와도 달라짐)
-                        # SFT 데이터 생성 모드도 지시문 없이 생성 (3B 데이터 생성 당시와 동일, 지시문은 SFT 데이터 구성 시 추가)
-                        add_decide_prompt=(not self._final_answer_last_only) and (not self._sft_data_mode)
+                        add_decide_prompt=add_decide_prompt
                     )
 
                     inputs.append(final_answer_prompt)
@@ -403,6 +407,23 @@ class CoragAgent:
         # 쿼리 문서 검색
         self._search_doc_for_query(query_results)
         
+        '''
+            [chain_depth=0] 일반 RAG : 서브 쿼리/서브 답변 없이, 메인 쿼리 문서(top_k_query 개)만으로 최종 답변을 1회 생성
+                - 종료 판단이 없으므로 <STOP>/<CONTINUE> 지시문은 모델/옵션(final_answer_last_only)과 무관하게 항상 넣지 않음
+                  -> 백본 / SFT / RL 모델의 RAG 성능을 동일한 프롬프트로 비교하기 위함
+                - 학습 모델이 습관적으로 붙이는 <STOP>/<CONTINUE> 접두어는 _check_step_final_answers() 에서 동일하게 제거됨
+        '''
+        if chain_depth == 0:
+            depth_start = common_utils.get_time_ms()
+            self._check_step_final_answers(query_results, add_decide_prompt=False)
+
+            if DEBUG.CORAG:
+                count_processing_chains = self._get_count_processing_chains(query_results, 0)
+                elapsed_ms, elapsed_str = common_utils.get_elapsed_time_ms(depth_start)
+                print(f'# [CORAG] CoragAgent.generate_batch() [{self._batch_idx} batch] [0 depth] [{count_processing_chains} chains], elapsed_time : {elapsed_str} ({elapsed_ms})ms')
+
+            return query_results
+
         # 각 depth 마다 서브 쿼리 생성 및 처리
         for depth in range(chain_depth):
             depth_start = common_utils.get_time_ms()

@@ -61,11 +61,12 @@ def parse_args():
     p.add_argument('--model', required=True, help='HF 모델 이름 또는 로컬 경로 (완전한 모델이어야 함)')
     p.add_argument('--adapter', default='', help='LoRA 어댑터 경로 (선택)')
     p.add_argument('--tag', default='model', help='로그 출력에 붙일 식별자')
-    p.add_argument('--data', default='/raid/ai/home/jsyang/dev_env/git/repos/ranger/data/custom_multihopqa_eval_1000.jsonl')
+    p.add_argument('--data', default='/home/nlpshlee/dev_env/git/repos/ranger/data/custom_multihopqa_eval_1000.jsonl')
 
     p.add_argument('--batch-size', type=int, default=8)
     p.add_argument('--n-chains', type=int, default=5)
-    p.add_argument('--chain-depth', type=int, default=5)
+    p.add_argument('--chain-depth', type=int, default=5,
+                   help='0 이면 서브 스텝 없이 메인 쿼리 문서만으로 최종 답변 1회 생성 (일반 RAG, 모든 모델 동일 프롬프트)')
 
     p.add_argument('--greedy', action='store_true', help='n_chains=1 greedy 디코딩으로 평가')
     p.add_argument('--temperature', type=float, default=-9, help='-9 이면 VLLM_CONFIG 기본값')
@@ -137,7 +138,13 @@ def main():
     print(f'{prefix} data : {args.data} ({len(datas)}건)')
     vllm_config = build_vllm_config(args)
     print(f'{prefix} decoding : {decoding}, chain_depth : {args.chain_depth}, batch_size : {args.batch_size}')
-    print(f'{prefix} final_answer : {"마지막 스텝에서만 (조기종료 없는 베이스라인)" if args.final_answer_last_only else "매 스텝 (조기종료 판단용)"}')
+    if args.chain_depth == 0:
+        final_answer_mode = '메인 쿼리 문서만으로 1회 (일반 RAG, 지시문 없음, final_answer_last_only 무관)'
+    elif args.final_answer_last_only:
+        final_answer_mode = '마지막 스텝에서만 (조기종료 없는 베이스라인)'
+    else:
+        final_answer_mode = '매 스텝 (조기종료 판단용)'
+    print(f'{prefix} final_answer : {final_answer_mode}')
     print(f'{prefix} max_seq_length : {vllm_config["max_seq_length"]}, max_new_tokens : {vllm_config["max_new_tokens"]}, n_log_prob : {vllm_config["n_log_prob"]}')
     print(f'{prefix} start : {common_utils.get_datetime_now()}\n')
     start = common_utils.get_time_ms()

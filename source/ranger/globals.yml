@@ -31,7 +31,7 @@ RETRIEVER_SERVER_CONFIG:
 
 
 VLLM_CONFIG:
-  MODEL_NAME: '/raid/ai/home/jsyang/dev_env/git/repos/ranger/outputs/sft/Llama-3.1-8B/merged-822'
+  MODEL_NAME: '/home/nlpshlee/dev_env/git/repos/ranger/outputs/sft/Llama-3.1-8B/merged-822'
   DEVICE: 0
   DTYPE: 'bfloat16'
   MAX_SEQ_LENGTH: 4096
@@ -58,7 +58,7 @@ CHAIN_SERVER_CONFIG:
 
 
 MODEL_CONFIG:
-  MODEL_NAME: '/raid/ai/home/jsyang/dev_env/git/repos/ranger/outputs/sft/Llama-3.1-8B/merged-822'
+  MODEL_NAME: '/home/nlpshlee/dev_env/git/repos/ranger/outputs/sft/Llama-3.1-8B/merged-822'
   DTYPE: 'bfloat16'
   MAX_SEQ_LENGTH: 4096
   LORA_R: 64
